@@ -17,6 +17,7 @@ PROGS-$(CONFIG_FFSERVER) += ffserver
 
 PROGS      := $(PROGS-yes:%=%$(PROGSSUF)$(EXESUF))
 INSTPROGS   = $(PROGS-yes:%=%$(PROGSSUF)$(EXESUF))
+
 OBJS        = cmdutils.o $(EXEOBJS)
 OBJS-ffmpeg = ffmpeg_opt.o ffmpeg_filter.o
 TESTTOOLS   = audiogen videogen rotozoom tiny_psnr base64
@@ -68,7 +69,7 @@ config.h: .config
 	@-tput sgr0 2>/dev/null
 
 SUBDIR_VARS := CLEANFILES EXAMPLES FFLIBS HOSTPROGS TESTPROGS TOOLS      \
-               ARCH_HEADERS BUILT_HEADERS SKIPHEADERS                    \
+               HEADERS ARCH_HEADERS BUILT_HEADERS SKIPHEADERS            \
                ARMV5TE-OBJS ARMV6-OBJS ARMVFP-OBJS NEON-OBJS             \
                ALTIVEC-OBJS VIS-OBJS                                     \
                MMX-OBJS YASM-OBJS                                        \

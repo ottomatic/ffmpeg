@@ -1375,6 +1375,7 @@ static int mov_write_gmhd_tag(AVIOContext *pb, MOVTrack *track)
      * don't appear to be documented, so the
      * bytes are copied verbatim.
      */
+    if (track->tag != MKTAG('c','6','0','8')) {
     avio_wb32(pb, 0x2C);   /* size */
     ffio_wfourcc(pb, "text");
     avio_wb16(pb, 0x01);
@@ -1387,6 +1388,7 @@ static int mov_write_gmhd_tag(AVIOContext *pb, MOVTrack *track)
     avio_wb32(pb, 0x00);
     avio_wb32(pb, 0x00004000);
     avio_wb16(pb, 0x0000);
+    }
 
     if (track->enc->codec_tag == MKTAG('t','m','c','d')) {
         int64_t tmcd_pos = avio_tell(pb);
@@ -1435,9 +1437,14 @@ static int mov_write_hdlr_tag(AVIOContext *pb, MOVTrack *track)
             hdlr_type = "soun";
             descr = "SoundHandler";
         } else if (track->enc->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+            if (track->tag == MKTAG('c','6','0','8')) {
+                hdlr_type = "clcp";
+                descr = "ClosedCaptionHandler";
+            } else {
             if (track->tag == MKTAG('t','x','3','g')) hdlr_type = "sbtl";
             else                                      hdlr_type = "text";
             descr = "SubtitleHandler";
+            }
         } else if (track->enc->codec_tag == MKTAG('t','m','c','d')) {
             hdlr_type = "tmcd";
             descr = "TimeCodeHandler";
@@ -1492,8 +1499,11 @@ static int mov_write_minf_tag(AVIOContext *pb, MOVTrack *track)
     else if (track->enc->codec_type == AVMEDIA_TYPE_AUDIO)
         mov_write_smhd_tag(pb);
     else if (track->enc->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-        if (track->tag == MKTAG('t','e','x','t')) mov_write_gmhd_tag(pb, track);
-        else                                      mov_write_nmhd_tag(pb);
+        if (track->tag == MKTAG('t','e','x','t') || track->tag == MKTAG('c','6','0','8')) {
+            mov_write_gmhd_tag(pb, track);
+        } else {
+            mov_write_nmhd_tag(pb);
+        }
     } else if (track->tag == MKTAG('t','m','c','d')) {
         mov_write_gmhd_tag(pb, track);
     } else if (track->tag == MKTAG('r','t','p',' ')) {
@@ -1662,6 +1672,12 @@ static int mov_write_tapt_tag(AVIOContext *pb, MOVTrack *track)
     avio_wb32(pb, track->enc->height << 16);
 
     avio_wb32(pb, 20);
+    ffio_wfourcc(pb, "prof");
+    avio_wb32(pb, 0);
+    avio_wb32(pb, width << 16);
+    avio_wb32(pb, track->enc->height << 16);
+
+    avio_wb32(pb, 20);
     ffio_wfourcc(pb, "enof");
     avio_wb32(pb, 0);
     avio_wb32(pb, track->enc->width << 16);
@@ -1705,8 +1721,8 @@ static int mov_write_edts_tag(AVIOContext *pb, MOVTrack *track)
         }
         avio_wb32(pb, 0x00010000);
     } else {
-        av_assert0(track->cluster[0].dts <= 0);
-        start_ct  = -track->cluster[0].dts;
+        av_assert0(av_rescale_rnd(track->cluster[0].dts, MOV_TIMESCALE, track->timescale, AV_ROUND_DOWN) <= 0);
+        start_ct  = -FFMIN(track->cluster[0].dts, 0); //FFMIN needed due to rounding
         duration += delay;
     }
 
@@ -1751,13 +1767,16 @@ static int mov_write_uuid_tag_psp(AVIOContext *pb, MOVTrack *mov)
     return 0x34;
 }
 
-static int mov_write_udta_sdp(AVIOContext *pb, AVFormatContext *ctx, int index)
+static int mov_write_udta_sdp(AVIOContext *pb, MOVTrack *track)
 {
+
+    AVFormatContext *ctx = track->rtp_ctx;
     char buf[1000] = "";
     int len;
 
-    ff_sdp_write_media(buf, sizeof(buf), ctx->streams[0]->codec, NULL, NULL, 0, 0, ctx);
-    av_strlcatf(buf, sizeof(buf), "a=control:streamid=%d\r\n", index);
+    ff_sdp_write_media(buf, sizeof(buf), ctx->streams[0], track->src_track,
+                       NULL, NULL, 0, 0, ctx);
+    av_strlcatf(buf, sizeof(buf), "a=control:streamid=%d\r\n", track->track_id);
     len = strlen(buf);
 
     avio_wb32(pb, len + 24);
@@ -1785,7 +1804,7 @@ static int mov_write_trak_tag(AVIOContext *pb, MOVMuxContext *mov,
     if (track->mode == MODE_PSP)
         mov_write_uuid_tag_psp(pb,track);  // PSP Movies require this uuid box
     if (track->tag == MKTAG('r','t','p',' '))
-        mov_write_udta_sdp(pb, track->rtp_ctx, track->track_id);
+        mov_write_udta_sdp(pb, track);
     if (track->enc->codec_type == AVMEDIA_TYPE_VIDEO && track->mode == MODE_MOV) {
         double sample_aspect_ratio = av_q2d(st->sample_aspect_ratio);
         if (st->sample_aspect_ratio.num && 1.0 != sample_aspect_ratio)
@@ -2012,6 +2031,24 @@ static int mov_write_trkn_tag(AVIOContext *pb, MOVMuxContext *mov,
     return size;
 }
 
+static int mov_write_int8_metadata(AVFormatContext *s, AVIOContext *pb,
+                                   const char *name, const char *tag,
+                                   int len)
+{
+    AVDictionaryEntry *t = NULL;
+    uint8_t num;
+
+    if (!(t = av_dict_get(s->metadata, tag, NULL, 0)))
+        return 0;
+    num = atoi(t->value);
+
+    avio_wb32(pb, len+8);
+    ffio_wfourcc(pb, name);
+    if (len==4) avio_wb32(pb, num);
+    else        avio_w8 (pb, num);
+    return len+8;
+}
+
 /* iTunes meta data list */
 static int mov_write_ilst_tag(AVIOContext *pb, MOVMuxContext *mov,
                               AVFormatContext *s)
@@ -2036,6 +2073,11 @@ static int mov_write_ilst_tag(AVIOContext *pb, MOVMuxContext *mov,
     mov_write_string_metadata(s, pb, "tvsh",    "show"     , 1);
     mov_write_string_metadata(s, pb, "tven",    "episode_id",1);
     mov_write_string_metadata(s, pb, "tvnn",    "network"  , 1);
+    mov_write_int8_metadata  (s, pb, "tves",    "episode_sort",4);
+    mov_write_int8_metadata  (s, pb, "tvsn",    "season_number",4);
+    mov_write_int8_metadata  (s, pb, "stik",    "media_type",1);
+    mov_write_int8_metadata  (s, pb, "hdvd",    "hd_video",  1);
+    mov_write_int8_metadata  (s, pb, "pgap",    "gapless_playback",1);
     mov_write_trkn_tag(pb, mov, s);
     mov_write_tmpo_tag(pb, s);
     return update_size(pb, pos);

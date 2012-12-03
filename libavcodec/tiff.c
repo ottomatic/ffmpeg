@@ -67,26 +67,26 @@ typedef struct TiffContext {
 
 static unsigned tget_short(GetByteContext *gb, int le)
 {
-    unsigned v = le ? bytestream2_get_le16u(gb) : bytestream2_get_be16u(gb);
+    unsigned v = le ? bytestream2_get_le16(gb) : bytestream2_get_be16(gb);
     return v;
 }
 
 static unsigned tget_long(GetByteContext *gb, int le)
 {
-    unsigned v = le ? bytestream2_get_le32u(gb) : bytestream2_get_be32u(gb);
+    unsigned v = le ? bytestream2_get_le32(gb) : bytestream2_get_be32(gb);
     return v;
 }
 
 static double tget_double(GetByteContext *gb, int le)
 {
-    av_alias64 i = { .u64 = le ? bytestream2_get_le64u(gb) : bytestream2_get_be64u(gb)};
+    av_alias64 i = { .u64 = le ? bytestream2_get_le64(gb) : bytestream2_get_be64(gb)};
     return i.f64;
 }
 
 static unsigned tget(GetByteContext *gb, int type, int le)
 {
     switch (type) {
-    case TIFF_BYTE : return bytestream2_get_byteu(gb);
+    case TIFF_BYTE : return bytestream2_get_byte(gb);
     case TIFF_SHORT: return tget_short(gb, le);
     case TIFF_LONG : return tget_long(gb, le);
     default        : return UINT_MAX;
@@ -254,7 +254,7 @@ static int add_doubles_metadata(int count,
     int i;
     double *dp;
 
-    if (count >= INT_MAX / sizeof(int64_t))
+    if (count >= INT_MAX / sizeof(int64_t) || count <= 0)
         return AVERROR_INVALIDDATA;
     if (bytestream2_get_bytes_left(&s->gb) < count * sizeof(int64_t))
         return AVERROR_INVALIDDATA;
@@ -280,7 +280,7 @@ static int add_shorts_metadata(int count, const char *name,
     int i;
     int16_t *sp;
 
-    if (count >= INT_MAX / sizeof(int16_t))
+    if (count >= INT_MAX / sizeof(int16_t) || count <= 0)
         return AVERROR_INVALIDDATA;
     if (bytestream2_get_bytes_left(&s->gb) < count * sizeof(int16_t))
         return AVERROR_INVALIDDATA;
@@ -1079,14 +1079,19 @@ static int decode_frame(AVCodecContext *avctx,
     dst = p->data[0];
 
     if (s->stripsizesoff) {
-        if (s->stripsizesoff >= avpkt->size)
+        if (s->stripsizesoff >= (unsigned)avpkt->size)
             return AVERROR_INVALIDDATA;
         bytestream2_init(&stripsizes, avpkt->data + s->stripsizesoff, avpkt->size - s->stripsizesoff);
     }
     if (s->strippos) {
-        if (s->strippos >= avpkt->size)
+        if (s->strippos >= (unsigned)avpkt->size)
             return AVERROR_INVALIDDATA;
         bytestream2_init(&stripdata, avpkt->data + s->strippos, avpkt->size - s->strippos);
+    }
+
+    if (s->rps <= 0) {
+        av_log(avctx, AV_LOG_ERROR, "rps %d invalid\n", s->rps);
+        return AVERROR_INVALIDDATA;
     }
 
     for (i = 0; i < s->height; i += s->rps) {

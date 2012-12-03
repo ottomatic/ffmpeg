@@ -23,7 +23,7 @@
  * Audio silence detector
  */
 
-#include "libavutil/audioconvert.h"
+#include "libavutil/channel_layout.h"
 #include "libavutil/opt.h"
 #include "libavutil/timestamp.h"
 #include "audio.h"
@@ -84,7 +84,7 @@ static char *get_metadata_val(AVFilterBufferRef *insamples, const char *key)
     return e && e->value ? e->value : NULL;
 }
 
-static int filter_samples(AVFilterLink *inlink, AVFilterBufferRef *insamples)
+static int filter_frame(AVFilterLink *inlink, AVFilterBufferRef *insamples)
 {
     int i;
     SilenceDetectContext *silence = inlink->dst->priv;
@@ -132,7 +132,7 @@ static int filter_samples(AVFilterLink *inlink, AVFilterBufferRef *insamples)
         }
     }
 
-    return ff_filter_samples(inlink->dst->outputs[0], insamples);
+    return ff_filter_frame(inlink->dst->outputs[0], insamples);
 }
 
 static int query_formats(AVFilterContext *ctx)
@@ -162,24 +162,31 @@ static int query_formats(AVFilterContext *ctx)
     return 0;
 }
 
+static const AVFilterPad silencedetect_inputs[] = {
+    {
+        .name             = "default",
+        .type             = AVMEDIA_TYPE_AUDIO,
+        .get_audio_buffer = ff_null_get_audio_buffer,
+        .filter_frame     = filter_frame,
+    },
+    { NULL }
+};
+
+static const AVFilterPad silencedetect_outputs[] = {
+    {
+        .name = "default",
+        .type = AVMEDIA_TYPE_AUDIO,
+    },
+    { NULL }
+};
+
 AVFilter avfilter_af_silencedetect = {
     .name          = "silencedetect",
     .description   = NULL_IF_CONFIG_SMALL("Detect silence."),
     .priv_size     = sizeof(SilenceDetectContext),
     .init          = init,
     .query_formats = query_formats,
-
-    .inputs = (const AVFilterPad[]) {
-        { .name             = "default",
-          .type             = AVMEDIA_TYPE_AUDIO,
-          .get_audio_buffer = ff_null_get_audio_buffer,
-          .filter_samples   = filter_samples, },
-        { .name = NULL }
-    },
-    .outputs = (const AVFilterPad[]) {
-        { .name = "default",
-          .type = AVMEDIA_TYPE_AUDIO, },
-        { .name = NULL }
-    },
-    .priv_class = &silencedetect_class,
+    .inputs        = silencedetect_inputs,
+    .outputs       = silencedetect_outputs,
+    .priv_class    = &silencedetect_class,
 };

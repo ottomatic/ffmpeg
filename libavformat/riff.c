@@ -39,8 +39,10 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_H264,         MKTAG('x', '2', '6', '4') },
     { AV_CODEC_ID_H264,         MKTAG('a', 'v', 'c', '1') },
     { AV_CODEC_ID_H264,         MKTAG('D', 'A', 'V', 'C') },
+    { AV_CODEC_ID_H264,         MKTAG('S', 'M', 'V', '2') },
     { AV_CODEC_ID_H264,         MKTAG('V', 'S', 'S', 'H') },
     { AV_CODEC_ID_H264,         MKTAG('Q', '2', '6', '4') }, /* QNAP surveillance system */
+    { AV_CODEC_ID_H264,         MKTAG('V', '2', '6', '4') },
     { AV_CODEC_ID_H263,         MKTAG('H', '2', '6', '3') },
     { AV_CODEC_ID_H263,         MKTAG('X', '2', '6', '3') },
     { AV_CODEC_ID_H263,         MKTAG('T', '2', '6', '3') },
@@ -48,6 +50,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_H263,         MKTAG('V', 'X', '1', 'K') },
     { AV_CODEC_ID_H263,         MKTAG('Z', 'y', 'G', 'o') },
     { AV_CODEC_ID_H263,         MKTAG('M', '2', '6', '3') },
+    { AV_CODEC_ID_H263,         MKTAG('l', 's', 'v', 'm') },
     { AV_CODEC_ID_H263P,        MKTAG('H', '2', '6', '3') },
     { AV_CODEC_ID_H263I,        MKTAG('I', '2', '6', '3') }, /* intel h263 */
     { AV_CODEC_ID_H261,         MKTAG('H', '2', '6', '1') },
@@ -111,6 +114,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_MSMPEG4V1,    MKTAG('M', 'P', '4', '1') },
     { AV_CODEC_ID_WMV1,         MKTAG('W', 'M', 'V', '1') },
     { AV_CODEC_ID_WMV2,         MKTAG('W', 'M', 'V', '2') },
+    { AV_CODEC_ID_WMV2,         MKTAG('G', 'X', 'V', 'E') },
     { AV_CODEC_ID_DVVIDEO,      MKTAG('d', 'v', 's', 'd') },
     { AV_CODEC_ID_DVVIDEO,      MKTAG('d', 'v', 'h', 'd') },
     { AV_CODEC_ID_DVVIDEO,      MKTAG('d', 'v', 'h', '1') },
@@ -335,8 +339,10 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_PCM_ALAW,        0x0006 },
     { AV_CODEC_ID_PCM_MULAW,       0x0007 },
     { AV_CODEC_ID_WMAVOICE,        0x000A },
+    { AV_CODEC_ID_ADPCM_IMA_OKI,   0x0010 },
     { AV_CODEC_ID_ADPCM_IMA_WAV,   0x0011 },
     { AV_CODEC_ID_PCM_ZORK,        0x0011 }, /* must come after adpcm_ima_wav in this list */
+    { AV_CODEC_ID_ADPCM_IMA_OKI,   0x0017 },
     { AV_CODEC_ID_ADPCM_YAMAHA,    0x0020 },
     { AV_CODEC_ID_TRUESPEECH,      0x0022 },
     { AV_CODEC_ID_GSM_MS,          0x0031 },
@@ -373,16 +379,12 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_PCM_MULAW,       0x6c75 },
     { AV_CODEC_ID_AAC,             0x706d },
     { AV_CODEC_ID_AAC,             0x4143 },
+    { AV_CODEC_ID_G723_1,          0xA100 },
+    { AV_CODEC_ID_AAC,             0xA106 },
     { AV_CODEC_ID_SPEEX,           0xA109 },
     { AV_CODEC_ID_FLAC,            0xF1AC },
     { AV_CODEC_ID_ADPCM_SWF,       ('S'<<8)+'F' },
     { AV_CODEC_ID_VORBIS,          ('V'<<8)+'o' }, //HACK/FIXME, does vorbis in WAV/AVI have an (in)official id?
-
-    /* FIXME: All of the IDs below are not 16 bit and thus illegal. */
-    // for NuppelVideo (nuv.c)
-    { AV_CODEC_ID_PCM_S16LE, MKTAG('R', 'A', 'W', 'A') },
-    { AV_CODEC_ID_MP3,       MKTAG('L', 'A', 'M', 'E') },
-    { AV_CODEC_ID_MP3,       MKTAG('M', 'P', '3', ' ') },
     { AV_CODEC_ID_NONE,      0 },
 };
 
@@ -408,13 +410,6 @@ const AVMetadataConv ff_riff_info_conv[] = {
     { "ISMP", "timecode"  },
     { "ITCH", "encoded_by"},
     { 0 },
-};
-
-const char ff_riff_tags[][5] = {
-    "IARL", "IART", "ICMS", "ICMT", "ICOP", "ICRD", "ICRP", "IDIM", "IDPI",
-    "IENG", "IGNR", "IKEY", "ILGT", "ILNG", "IMED", "INAM", "IPLT", "IPRD",
-    "IPRT", "ISBJ", "ISFT", "ISHP", "ISMP", "ISRC", "ISRF", "ITCH",
-    {0}
 };
 
 #if CONFIG_MUXERS
@@ -633,12 +628,19 @@ void ff_riff_write_info_tag(AVIOContext *pb, const char *tag, const char *str)
     }
 }
 
+static const char riff_tags[][5] = {
+    "IARL", "IART", "ICMS", "ICMT", "ICOP", "ICRD", "ICRP", "IDIM", "IDPI",
+    "IENG", "IGNR", "IKEY", "ILGT", "ILNG", "IMED", "INAM", "IPLT", "IPRD",
+    "IPRT", "ISBJ", "ISFT", "ISHP", "ISMP", "ISRC", "ISRF", "ITCH",
+    {0}
+};
+
 static int riff_has_valid_tags(AVFormatContext *s)
 {
     int i;
 
-    for (i = 0; *ff_riff_tags[i]; i++) {
-        if (av_dict_get(s->metadata, ff_riff_tags[i], NULL, AV_DICT_MATCH_CASE))
+    for (i = 0; *riff_tags[i]; i++) {
+        if (av_dict_get(s->metadata, riff_tags[i], NULL, AV_DICT_MATCH_CASE))
             return 1;
     }
 
@@ -660,8 +662,8 @@ void ff_riff_write_info(AVFormatContext *s)
 
     list_pos = ff_start_tag(pb, "LIST");
     ffio_wfourcc(pb, "INFO");
-    for (i = 0; *ff_riff_tags[i]; i++) {
-        if ((t = av_dict_get(s->metadata, ff_riff_tags[i], NULL, AV_DICT_MATCH_CASE)))
+    for (i = 0; *riff_tags[i]; i++) {
+        if ((t = av_dict_get(s->metadata, riff_tags[i], NULL, AV_DICT_MATCH_CASE)))
             ff_riff_write_info_tag(s->pb, t->key, t->value);
     }
     ff_end_tag(pb, list_pos);
@@ -751,15 +753,12 @@ enum AVCodecID ff_wav_codec_get_id(unsigned int tag, int bps)
     id = ff_codec_get_id(ff_codec_wav_tags, tag);
     if (id <= 0)
         return id;
-    /* handle specific u8 codec */
-    if (id == AV_CODEC_ID_PCM_S16LE && bps == 8)
-        id = AV_CODEC_ID_PCM_U8;
-    if (id == AV_CODEC_ID_PCM_S16LE && bps == 24)
-        id = AV_CODEC_ID_PCM_S24LE;
-    if (id == AV_CODEC_ID_PCM_S16LE && bps == 32)
-        id = AV_CODEC_ID_PCM_S32LE;
-    if (id == AV_CODEC_ID_PCM_F32LE && bps == 64)
-        id = AV_CODEC_ID_PCM_F64LE;
+
+    if (id == AV_CODEC_ID_PCM_S16LE)
+        id = ff_get_pcm_codec_id(bps, 0, 0, ~1);
+    else if (id == AV_CODEC_ID_PCM_F32LE)
+        id = ff_get_pcm_codec_id(bps, 1, 0, 0);
+
     if (id == AV_CODEC_ID_ADPCM_IMA_WAV && bps == 8)
         id = AV_CODEC_ID_PCM_ZORK;
     return id;
@@ -816,17 +815,24 @@ int ff_read_riff_info(AVFormatContext *s, int64_t size)
 
         chunk_code = avio_rl32(pb);
         chunk_size = avio_rl32(pb);
+
         if (chunk_size > end || end - chunk_size < cur || chunk_size == UINT_MAX) {
             avio_seek(pb, -9, SEEK_CUR);
             chunk_code = avio_rl32(pb);
             chunk_size = avio_rl32(pb);
             if (chunk_size > end || end - chunk_size < cur || chunk_size == UINT_MAX) {
-                av_log(s, AV_LOG_ERROR, "too big INFO subchunk\n");
+                av_log(s, AV_LOG_WARNING, "too big INFO subchunk\n");
                 return AVERROR_INVALIDDATA;
             }
         }
 
         chunk_size += (chunk_size & 1);
+
+        if (!chunk_code) {
+            if (chunk_size)
+                avio_skip(pb, chunk_size);
+            continue;
+        }
 
         value = av_mallocz(chunk_size + 1);
         if (!value) {

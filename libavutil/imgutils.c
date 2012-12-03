@@ -21,6 +21,7 @@
  * misc image utilities
  */
 
+#include "avassert.h"
 #include "common.h"
 #include "imgutils.h"
 #include "internal.h"
@@ -244,6 +245,8 @@ void av_image_copy_plane(uint8_t       *dst, int dst_linesize,
 {
     if (!dst || !src)
         return;
+    av_assert0(abs(src_linesize) >= bytewidth);
+    av_assert0(abs(dst_linesize) >= bytewidth);
     for (;height > 0; height--) {
         memcpy(dst, src, bytewidth);
         dst += dst_linesize;
@@ -276,6 +279,10 @@ void av_image_copy(uint8_t *dst_data[4], int dst_linesizes[4],
         for (i = 0; i < planes_nb; i++) {
             int h = height;
             int bwidth = av_image_get_linesize(pix_fmt, width, i);
+            if (bwidth < 0) {
+                av_log(NULL, AV_LOG_ERROR, "av_image_get_linesize failed\n");
+                return;
+            }
             if (i == 1 || i == 2) {
                 h= -((-height)>>desc->log2_chroma_h);
             }

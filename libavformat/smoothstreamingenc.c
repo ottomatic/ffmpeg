@@ -287,7 +287,11 @@ static int ism_write_header(AVFormatContext *s)
     int ret = 0, i;
     AVOutputFormat *oformat;
 
-    mkdir(s->filename, 0777);
+    if (mkdir(s->filename, 0777) < 0) {
+        av_log(s, AV_LOG_ERROR, "mkdir failed\n");
+        ret = AVERROR(errno);
+        goto fail;
+    }
 
     oformat = av_guess_format("ismv", NULL, NULL);
     if (!oformat) {
@@ -314,7 +318,11 @@ static int ism_write_header(AVFormatContext *s)
             goto fail;
         }
         snprintf(os->dirname, sizeof(os->dirname), "%s/QualityLevels(%d)", s->filename, s->streams[i]->codec->bit_rate);
-        mkdir(os->dirname, 0777);
+        if (mkdir(os->dirname, 0777) < 0) {
+            ret = AVERROR(errno);
+            av_log(s, AV_LOG_ERROR, "mkdir failed\n");
+            goto fail;
+        }
 
         ctx = avformat_alloc_context();
         if (!ctx) {
@@ -559,12 +567,15 @@ static int ism_write_packet(AVFormatContext *s, AVPacket *pkt)
     SmoothStreamingContext *c = s->priv_data;
     AVStream *st = s->streams[pkt->stream_index];
     OutputStream *os = &c->streams[pkt->stream_index];
-    int64_t end_pts = (c->nb_fragments + 1) * c->min_frag_duration;
+    int64_t end_dts = (c->nb_fragments + 1LL) * c->min_frag_duration;
     int ret;
 
+    if (st->first_dts == AV_NOPTS_VALUE)
+        st->first_dts = pkt->dts;
+
     if ((!c->has_video || st->codec->codec_type == AVMEDIA_TYPE_VIDEO) &&
-        av_compare_ts(pkt->pts, st->time_base,
-                      end_pts, AV_TIME_BASE_Q) >= 0 &&
+        av_compare_ts(pkt->dts - st->first_dts, st->time_base,
+                      end_dts, AV_TIME_BASE_Q) >= 0 &&
         pkt->flags & AV_PKT_FLAG_KEY && os->packets_written) {
 
         if ((ret = ism_flush(s, 0)) < 0)

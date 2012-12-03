@@ -90,12 +90,14 @@ void avfilter_register_all(void)
     REGISTER_FILTER (DRAWTEXT,    drawtext,    vf);
     REGISTER_FILTER (EDGEDETECT,  edgedetect,  vf);
     REGISTER_FILTER (FADE,        fade,        vf);
+    REGISTER_FILTER (FIELD,       field,       vf);
     REGISTER_FILTER (FIELDORDER,  fieldorder,  vf);
     REGISTER_FILTER (FIFO,        fifo,        vf);
     REGISTER_FILTER (FORMAT,      format,      vf);
     REGISTER_FILTER (FPS,         fps,         vf);
     REGISTER_FILTER (FRAMESTEP,   framestep,   vf);
     REGISTER_FILTER (FREI0R,      frei0r,      vf);
+    REGISTER_FILTER (GEQ,         geq,         vf);
     REGISTER_FILTER (GRADFUN,     gradfun,     vf);
     REGISTER_FILTER (HFLIP,       hflip,       vf);
     REGISTER_FILTER (HQDN3D,      hqdn3d,      vf);
@@ -122,7 +124,6 @@ void avfilter_register_all(void)
     REGISTER_FILTER (SETSAR,      setsar,      vf);
     REGISTER_FILTER (SETTB,       settb,       vf);
     REGISTER_FILTER (SHOWINFO,    showinfo,    vf);
-    REGISTER_FILTER (SLICIFY,     slicify,     vf);
     REGISTER_FILTER (SMARTBLUR,   smartblur,   vf);
     REGISTER_FILTER (SPLIT,       split,       vf);
     REGISTER_FILTER (SUPER2XSAI,  super2xsai,  vf);

@@ -691,6 +691,7 @@ static int avi_read_header(AVFormatContext *s)
                 case AVMEDIA_TYPE_SUBTITLE:
                     st->codec->codec_type = AVMEDIA_TYPE_SUBTITLE;
                     st->request_probe= 1;
+                    avio_skip(pb, size);
                     break;
                 default:
                     st->codec->codec_type = AVMEDIA_TYPE_DATA;
@@ -1270,6 +1271,11 @@ static int avi_read_idx1(AVFormatContext *s, int size)
     }
     avi->stream_index = -1;
     avio_seek(pb, idx1_pos, SEEK_SET);
+
+    if (s->nb_streams == 1 && s->streams[0]->codec->codec_tag == AV_RL32("MMES")){
+        first_packet_pos = 0;
+        data_offset = avi->movi_list;
+    }
 
     /* Read the entries and sort them in each stream component. */
     for(i = 0; i < nb_index_entries; i++) {

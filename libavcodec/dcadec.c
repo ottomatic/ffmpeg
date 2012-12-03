@@ -26,12 +26,12 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "libavutil/float_dsp.h"
 #include "libavutil/intmath.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
-#include "libavutil/audioconvert.h"
 #include "libavutil/samplefmt.h"
 #include "avcodec.h"
 #include "dsputil.h"
@@ -448,7 +448,6 @@ typedef struct {
     int xxch_chset_nch[4];
     float xxch_dmix_sf[DCA_CHSETS_MAX];
 
-    uint32_t xxch_downmix;        /* downmix enabled per channel set */
     uint32_t xxch_dmix_embedded;  /* lower layer has mix pre-embedded, per chset */
     float xxch_dmix_coeff[DCA_PRIM_CHANNELS_MAX][32]; /* worst case sizing */
 
@@ -597,7 +596,6 @@ static int dca_parse_audio_coding_header(DCAContext *s, int base_channel,
             s->xxch_dmix_sf[s->xxch_chset] = scale_factor;
 
             for (i = base_channel; i < s->prim_channels; i++) {
-                s->xxch_downmix |= (1 << i);
                 mask[i] = get_bits(&s->gb, s->xxch_nbits_spk_mask);
             }
 
@@ -738,6 +736,12 @@ static int dca_parse_frame_header(DCAContext *s)
     s->aspf              = get_bits(&s->gb, 1);
     s->lfe               = get_bits(&s->gb, 2);
     s->predictor_history = get_bits(&s->gb, 1);
+
+    if (s->lfe == 3) {
+        s->lfe = 0;
+        av_log_ask_for_sample(s->avctx, "LFE is 3\n");
+        return AVERROR_PATCHWELCOME;
+    }
 
     /* TODO: check CRC */
     if (s->crc_present)
@@ -1212,7 +1216,7 @@ static void dca_downmix(float **samples, int srcfmt,
     case DCA_STEREO_TOTAL:
     case DCA_STEREO_SUMDIFF:
     case DCA_4F2R:
-        av_log(NULL, 0, "Not implemented!\n");
+        av_log(NULL, AV_LOG_ERROR, "Not implemented!\n");
         break;
     case DCA_STEREO:
         break;
@@ -1442,9 +1446,10 @@ static int dca_filter_channels(DCAContext *s, int block_index)
     for (k = 0; k < s->prim_channels; k++) {
 /*        static float pcm_to_double[8] = { 32768.0, 32768.0, 524288.0, 524288.0,
                                             0, 8388608.0, 8388608.0 };*/
-        qmf_32_subbands(s, k, subband_samples[k],
-                        s->samples_chanptr[s->channel_order_tab[k]],
-                        M_SQRT1_2 / 32768.0 /* pcm_to_double[s->source_pcm_res] */);
+        if (s->channel_order_tab[k] >= 0)
+            qmf_32_subbands(s, k, subband_samples[k],
+                            s->samples_chanptr[s->channel_order_tab[k]],
+                            M_SQRT1_2 / 32768.0 /* pcm_to_double[s->source_pcm_res] */);
     }
 
     /* Down mixing */
@@ -1904,7 +1909,6 @@ static int dca_xxch_decode_frame(DCAContext *s)
     core_spk               = get_bits(&s->gb, spkmsk_bits);
     s->xxch_core_spkmask   = core_spk;
     s->xxch_nbits_spk_mask = spkmsk_bits;
-    s->xxch_downmix        = 0;
     s->xxch_dmix_embedded  = 0;
 
     /* skip to the end of the header */
@@ -2160,6 +2164,11 @@ static int dca_decode_frame(AVCodecContext *avctx, void *data,
                     continue;
                 }
 
+                if (s->xch_base_channel < 2) {
+                    av_log_ask_for_sample(avctx, "XCh with fewer than 2 base channels is not supported\n");
+                    continue;
+                }
+
                 /* much like core primary audio coding header */
                 dca_parse_audio_coding_header(s, s->xch_base_channel, 0);
 
@@ -2251,6 +2260,11 @@ static int dca_decode_frame(AVCodecContext *avctx, void *data,
                 s->channel_order_tab[channels - 1 - !!s->lfe] < 0)
                 return AVERROR_INVALIDDATA;
 
+            if (av_get_channel_layout_nb_channels(avctx->channel_layout) != channels) {
+                av_log(avctx, AV_LOG_ERROR, "Number of channels %d mismatches layout %d\n", channels, av_get_channel_layout_nb_channels(avctx->channel_layout));
+                return AVERROR_INVALIDDATA;
+            }
+
             if (avctx->request_channels == 2 && s->prim_channels > 2) {
                 channels = 2;
                 s->output = DCA_STEREO;
@@ -2267,7 +2281,7 @@ static int dca_decode_frame(AVCodecContext *avctx, void *data,
             return AVERROR_INVALIDDATA;
         }
 
-        s->xxch_downmix = 0;
+        s->xxch_dmix_embedded = 0;
     } else {
         /* we only get here if an XXCH channel set can be added to the mix */
         channel_mask = s->xxch_core_spkmask;

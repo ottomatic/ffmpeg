@@ -7,6 +7,9 @@ fate-adts-demux: CMD = crc -i $(SAMPLES)/aac/ct_faac-adts.aac -acodec copy
 FATE_SAMPLES_DEMUX-$(CONFIG_AEA_DEMUXER) += fate-aea-demux
 fate-aea-demux: CMD = crc -i $(SAMPLES)/aea/chirp.aea -acodec copy
 
+FATE_SAMPLES_DEMUX-$(CONFIG_AST_DEMUXER) += fate-ast
+fate-ast: CMD = crc -i $(SAMPLES)/ast/demo11_02_partial.ast -c copy
+
 FATE_SAMPLES_DEMUX-$(CONFIG_BINK_DEMUXER) += fate-bink-demux
 fate-bink-demux: CMD = crc -i $(SAMPLES)/bink/Snd0a7d9b58.dee -vn -acodec copy
 
@@ -22,7 +25,7 @@ fate-d-cinema-demux: CMD = framecrc -i $(SAMPLES)/d-cinema/THX_Science_FLT_1920-
 FATE_SAMPLES_DEMUX-$(CONFIG_IV8_DEMUXER) += fate-iv8-demux
 fate-iv8-demux: CMD = framecrc -i $(SAMPLES)/iv8/zzz-partial.mpg -vcodec copy
 
-FATE_SAMPLES_DEMUX += fate-jv-demux
+FATE_SAMPLES_DEMUX-$(CONFIG_JV_DEMUXER) += fate-jv-demux
 fate-jv-demux: CMD = framecrc -i $(SAMPLES)/jv/intro.jv -vcodec copy -acodec copy
 
 FATE_SAMPLES_DEMUX-$(CONFIG_LMLM4_DEMUXER) += fate-lmlm4-demux
@@ -46,8 +49,11 @@ fate-nsv-demux: CMD = framecrc -i $(SAMPLES)/nsv/witchblade-51kbps.nsv -t 6 -vco
 FATE_SAMPLES_DEMUX-$(CONFIG_OMA_DEMUXER) += fate-oma-demux
 fate-oma-demux: CMD = crc -i $(SAMPLES)/oma/01-Untitled-partial.oma -acodec copy
 
-FATE_SAMPLES_DEMUX += fate-paf-demux
+FATE_SAMPLES_DEMUX-$(CONFIG_PAF_DEMUXER) += fate-paf-demux
 fate-paf-demux: CMD = framecrc -i $(SAMPLES)/paf/hod1-partial.paf -vcodec copy -acodec copy
+
+FATE_SAMPLES_DEMUX-$(CONFIG_PMP_DEMUXER) += fate-pmp-demux
+fate-pmp-demux: CMD = framecrc -i $(SAMPLES)/pmp/demo.pmp -vn -c:a copy
 
 FATE_SAMPLES_DEMUX-$(CONFIG_STR_DEMUXER) += fate-psx-str-demux
 fate-psx-str-demux: CMD = framecrc -i $(SAMPLES)/psx-str/descent-partial.str -c copy

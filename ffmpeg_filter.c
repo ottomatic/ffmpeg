@@ -24,10 +24,11 @@
 #include "libavfilter/avfiltergraph.h"
 #include "libavfilter/buffersink.h"
 
-#include "libavutil/audioconvert.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
+#include "libavutil/channel_layout.h"
+#include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/imgutils.h"
@@ -724,6 +725,17 @@ int configure_filtergraph(FilterGraph *fg)
         char args[255];
         snprintf(args, sizeof(args), "flags=0x%X", (unsigned)ost->sws_flags);
         fg->graph->scale_sws_opts = av_strdup(args);
+
+        args[0] = 0;
+        if (ost->swr_filter_type != SWR_FILTER_TYPE_KAISER)
+            av_strlcatf(args, sizeof(args), "filter_type=%d:", (int)ost->swr_filter_type);
+        if (ost->swr_dither_method)
+            av_strlcatf(args, sizeof(args), "dither_method=%d:", (int)ost->swr_dither_method);
+        if (ost->swr_dither_scale != 1.0)
+            av_strlcatf(args, sizeof(args), "dither_scale=%f:", ost->swr_dither_scale);
+        if (strlen(args))
+            args[strlen(args)-1] = 0;
+        av_opt_set(fg->graph, "aresample_swr_opts", args, 0);
     }
 
     if ((ret = avfilter_graph_parse2(fg->graph, graph_desc, &inputs, &outputs)) < 0)

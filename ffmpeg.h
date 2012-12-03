@@ -217,6 +217,9 @@ typedef struct InputStream {
     int64_t       next_pts;  ///< synthetic pts for the next decode frame (in AV_TIME_BASE units)
     int64_t       pts;       ///< current pts of the decoded frame  (in AV_TIME_BASE units)
     int           wrap_correction_done;
+
+    int64_t filter_in_rescale_delta_last;
+
     double ts_scale;
     int is_start;            /* is 1 at the start and after a discontinuity */
     int saw_first_ts;
@@ -323,6 +326,7 @@ typedef struct OutputStream {
     char *avfilter;
 
     int64_t sws_flags;
+    int64_t swr_filter_type;
     int64_t swr_dither_method;
     double swr_dither_scale;
     AVDictionary *opts;

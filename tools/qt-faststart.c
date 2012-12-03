@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
     uint64_t i, j;
     uint32_t offset_count;
     uint64_t current_offset;
-    uint64_t start_offset = 0;
+    int64_t start_offset = 0;
     unsigned char *copy_buffer = NULL;
     int bytes_to_copy;
 
@@ -137,11 +137,11 @@ int main(int argc, char *argv[])
                 goto error_out;
             }
             if (   fseeko(infile, -ATOM_PREAMBLE_SIZE, SEEK_CUR)
-                || fread(ftyp_atom, atom_size, 1, infile) != 1) {
+                || fread(ftyp_atom, atom_size, 1, infile) != 1
+                || (start_offset = ftello(infile))<0) {
                 perror(argv[1]);
                 goto error_out;
             }
-            start_offset = ftello(infile);
         } else {
             int ret;
             /* 64-bit special case */

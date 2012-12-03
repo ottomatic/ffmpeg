@@ -293,8 +293,7 @@ static int encode_frame(AVCodecContext * avctx, AVPacket *pkt,
     case AV_PIX_FMT_YUV410P:
     case AV_PIX_FMT_YUV411P:
         s->photometric_interpretation = 6;
-        avcodec_get_chroma_sub_sample(avctx->pix_fmt,
-                &shift_h, &shift_v);
+        avcodec_get_chroma_sub_sample(avctx->pix_fmt, &shift_h, &shift_v);
         s->subsampling[0] = 1 << shift_h;
         s->subsampling[1] = 1 << shift_v;
         is_yuv = 1;
@@ -471,6 +470,8 @@ static int encode_frame(AVCodecContext * avctx, AVPacket *pkt,
         /** according to CCIR Recommendation 601.1 */
         uint32_t refbw[12] = {15, 1, 235, 1, 128, 1, 240, 1, 128, 1, 240, 1};
         add_entry(s, TIFF_YCBCR_SUBSAMPLING, TIFF_SHORT,    2, s->subsampling);
+        if (avctx->chroma_sample_location == AVCHROMA_LOC_TOPLEFT)
+            add_entry1(s, TIFF_YCBCR_POSITIONING, TIFF_SHORT, 2);
         add_entry(s, TIFF_REFERENCE_BW,      TIFF_RATIONAL, 6, refbw);
     }
     bytestream_put_le32(&offset, ptr - pkt->data);    // write offset to dir

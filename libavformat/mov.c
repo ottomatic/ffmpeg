@@ -26,7 +26,7 @@
 //#define MOV_EXPORT_ALL_METADATA
 
 #include "libavutil/attributes.h"
-#include "libavutil/audioconvert.h"
+#include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/mathematics.h"
@@ -312,6 +312,9 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG(0xa9,'t','o','o'):
     case MKTAG(0xa9,'s','w','r'): key = "encoder";   break;
     case MKTAG(0xa9,'e','n','c'): key = "encoder";   break;
+    case MKTAG(0xa9,'m','a','k'): key = "make";      break;
+    case MKTAG(0xa9,'m','o','d'): key = "model";     break;
+    case MKTAG(0xa9,'x','y','z'): key = "location";  break;
     case MKTAG( 'd','e','s','c'): key = "description";break;
     case MKTAG( 'l','d','e','s'): key = "synopsis";  break;
     case MKTAG( 't','v','s','h'): key = "show";      break;
@@ -1167,33 +1170,12 @@ static int mov_read_stco(MOVContext *c, AVIOContext *pb, MOVAtom atom)
  */
 enum AVCodecID ff_mov_get_lpcm_codec_id(int bps, int flags)
 {
-    if (flags & 1) { // floating point
-        if (flags & 2) { // big endian
-            if      (bps == 32) return AV_CODEC_ID_PCM_F32BE;
-            else if (bps == 64) return AV_CODEC_ID_PCM_F64BE;
-        } else {
-            if      (bps == 32) return AV_CODEC_ID_PCM_F32LE;
-            else if (bps == 64) return AV_CODEC_ID_PCM_F64LE;
-        }
-    } else {
-        if (flags & 2) {
-            if      (bps == 8) {
-                // signed integer
-                if (flags & 4)  return AV_CODEC_ID_PCM_S8;
-                else            return AV_CODEC_ID_PCM_U8;
-           }else if (bps == 16) return AV_CODEC_ID_PCM_S16BE;
-            else if (bps == 24) return AV_CODEC_ID_PCM_S24BE;
-            else if (bps == 32) return AV_CODEC_ID_PCM_S32BE;
-        } else {
-            if      (bps == 8) {
-                if (flags & 4)  return AV_CODEC_ID_PCM_S8;
-                else            return AV_CODEC_ID_PCM_U8;
-           }else if (bps == 16) return AV_CODEC_ID_PCM_S16LE;
-            else if (bps == 24) return AV_CODEC_ID_PCM_S24LE;
-            else if (bps == 32) return AV_CODEC_ID_PCM_S32LE;
-        }
-    }
-    return AV_CODEC_ID_NONE;
+    /* lpcm flags:
+     * 0x1 = float
+     * 0x2 = big-endian
+     * 0x4 = signed
+     */
+    return ff_get_pcm_codec_id(bps, flags & 1, flags & 2, flags & 4 ? -1 : 0);
 }
 
 int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
@@ -1277,7 +1259,6 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
             int color_greyscale;
             int color_table_id;
 
-            st->codec->codec_id = id;
             avio_rb16(pb); /* version */
             avio_rb16(pb); /* revision level */
             avio_rb32(pb); /* vendor */
@@ -1301,6 +1282,11 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
             /* codec_tag YV12 triggers an UV swap in rawdec.c */
             if (!memcmp(st->codec->codec_name, "Planar Y'CbCr 8-bit 4:2:0", 25))
                 st->codec->codec_tag=MKTAG('I', '4', '2', '0');
+            /* Flash Media Server streams files with Sorenson Spark and tag H263 */
+            if (!memcmp(st->codec->codec_name, "Sorenson H263", 13)
+                && format == MKTAG('H','2','6','3'))
+                id = AV_CODEC_ID_FLV1;
+            st->codec->codec_id = id;
 
             st->codec->bits_per_coded_sample = avio_rb16(pb); /* depth */
             color_table_id = avio_rb16(pb); /* colortable id */
@@ -1381,6 +1367,7 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         } else if (st->codec->codec_type==AVMEDIA_TYPE_AUDIO) {
             int bits_per_sample, flags;
             uint16_t version = avio_rb16(pb);
+            AVDictionaryEntry *compatible_brands = av_dict_get(c->fc->metadata, "compatible_brands", NULL, AV_DICT_MATCH_CASE);
 
             st->codec->codec_id = id;
             avio_rb16(pb); /* revision level */
@@ -1397,7 +1384,8 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
 
             //Read QT version 1 fields. In version 0 these do not exist.
             av_dlog(c->fc, "version =%d, isom =%d\n",version,c->isom);
-            if (!c->isom) {
+            if (!c->isom ||
+                (compatible_brands && strstr(compatible_brands->value, "qt  "))) {
                 if (version==1) {
                     sc->samples_per_frame = avio_rb32(pb);
                     avio_rb32(pb); /* bytes per packet */
@@ -1961,7 +1949,7 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
         unsigned int rap_group_index = 0;
         unsigned int rap_group_sample = 0;
         int rap_group_present = sc->rap_group_count && sc->rap_group;
-        int key_off = (sc->keyframe_count && sc->keyframes[0] > 0) || (sc->stps_data && sc->stps_data[0] > 0);
+        int key_off = (sc->keyframe_count && sc->keyframes[0] > 0) || (sc->stps_count && sc->stps_data[0] > 0);
 
         current_dts -= sc->dts_shift;
 
@@ -2170,6 +2158,16 @@ static int mov_open_dref(AVIOContext **pb, const char *src, MOVDref *ref,
     return AVERROR(ENOENT);
 }
 
+static void fix_timescale(MOVContext *c, MOVStreamContext *sc)
+{
+    if (sc->time_scale <= 0) {
+        av_log(c->fc, AV_LOG_WARNING, "stream %d, timescale not set\n", sc->ffindex);
+        sc->time_scale = c->time_scale;
+        if (sc->time_scale <= 0)
+            sc->time_scale = 1;
+    }
+}
+
 static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     AVStream *st;
@@ -2197,12 +2195,7 @@ static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         return 0;
     }
 
-    if (sc->time_scale <= 0) {
-        av_log(c->fc, AV_LOG_WARNING, "stream %d, timescale not set\n", st->index);
-        sc->time_scale = c->time_scale;
-        if (sc->time_scale <= 0)
-            sc->time_scale = 1;
-    }
+    fix_timescale(c, sc);
 
     avpriv_set_pts_info(st, 64, 1, sc->time_scale);
 
@@ -2227,8 +2220,9 @@ static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                                              ((double)st->codec->width * sc->height), INT_MAX);
         }
 
-        av_reduce(&st->avg_frame_rate.num, &st->avg_frame_rate.den,
-                  sc->time_scale*st->nb_frames, st->duration, INT_MAX);
+        if (st->duration > 0)
+            av_reduce(&st->avg_frame_rate.num, &st->avg_frame_rate.den,
+                    sc->time_scale*st->nb_frames, st->duration, INT_MAX);
 
 #if FF_API_R_FRAME_RATE
         if (sc->stts_count == 1 || (sc->stts_count == 2 && sc->stts_data[1].count == 1))
@@ -2910,7 +2904,7 @@ static int mov_probe(AVProbeData *p)
             offset = FFMAX(4, AV_RB32(p->buf+offset)) + offset;
         }
     }
-    if(tag > AVPROBE_SCORE_MAX - 50 && moov_offset != -1) {
+    if(score > AVPROBE_SCORE_MAX - 50 && moov_offset != -1) {
         /* moov atom in the header - we should make sure that this is not a
          * MOV-packed MPEG-PS */
         offset = moov_offset;
@@ -3180,6 +3174,7 @@ static int mov_read_header(AVFormatContext *s)
     for (i = 0; i < s->nb_streams; i++) {
         AVStream *st = s->streams[i];
         MOVStreamContext *sc = st->priv_data;
+        fix_timescale(mov, sc);
         if(st->codec->codec_type == AVMEDIA_TYPE_AUDIO && st->codec->codec_id == AV_CODEC_ID_AAC) {
             st->skip_samples = sc->start_pad;
         }
@@ -3398,4 +3393,5 @@ AVInputFormat ff_mov_demuxer = {
     .read_close     = mov_read_close,
     .read_seek      = mov_read_seek,
     .priv_class     = &class,
+    .flags          = AVFMT_NO_BYTE_SEEK,
 };

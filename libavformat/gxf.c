@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "avformat.h"
 #include "internal.h"
@@ -141,6 +142,7 @@ static int get_sindex(AVFormatContext *s, int id, int format) {
             st->codec->codec_type = AVMEDIA_TYPE_AUDIO;
             st->codec->codec_id = AV_CODEC_ID_PCM_S24LE;
             st->codec->channels = 1;
+            st->codec->channel_layout = AV_CH_LAYOUT_MONO;
             st->codec->sample_rate = 48000;
             st->codec->bit_rate = 3 * 1 * 48000 * 8;
             st->codec->block_align = 3 * 1;
@@ -150,6 +152,7 @@ static int get_sindex(AVFormatContext *s, int id, int format) {
             st->codec->codec_type = AVMEDIA_TYPE_AUDIO;
             st->codec->codec_id = AV_CODEC_ID_PCM_S16LE;
             st->codec->channels = 1;
+            st->codec->channel_layout = AV_CH_LAYOUT_MONO;
             st->codec->sample_rate = 48000;
             st->codec->bit_rate = 2 * 1 * 48000 * 8;
             st->codec->block_align = 2 * 1;
@@ -159,6 +162,7 @@ static int get_sindex(AVFormatContext *s, int id, int format) {
             st->codec->codec_type = AVMEDIA_TYPE_AUDIO;
             st->codec->codec_id = AV_CODEC_ID_AC3;
             st->codec->channels = 2;
+            st->codec->channel_layout = AV_CH_LAYOUT_STEREO;
             st->codec->sample_rate = 48000;
             break;
         // timecode tracks:
@@ -270,15 +274,16 @@ static void gxf_track_tags(AVIOContext *pb, int *len, struct gxf_stream_info *si
  */
 static void gxf_read_index(AVFormatContext *s, int pkt_len) {
     AVIOContext *pb = s->pb;
-    AVStream *st = s->streams[0];
+    AVStream *st;
     uint32_t fields_per_map = avio_rl32(pb);
     uint32_t map_cnt = avio_rl32(pb);
     int i;
     pkt_len -= 8;
-    if (s->flags & AVFMT_FLAG_IGNIDX) {
+    if ((s->flags & AVFMT_FLAG_IGNIDX) || !s->streams) {
         avio_skip(pb, pkt_len);
         return;
     }
+    st = s->streams[0];
     if (map_cnt > 1000) {
         av_log(s, AV_LOG_ERROR, "too many index entries %u (%x)\n", map_cnt, map_cnt);
         map_cnt = 1000;

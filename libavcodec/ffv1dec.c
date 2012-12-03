@@ -78,8 +78,6 @@ static inline int get_vlc_symbol(GetBitContext *gb, VlcState *const state,
         i += i;
     }
 
-    assert(k <= 8);
-
     v = get_sr_golomb(gb, k, 12, bits);
     av_dlog(NULL, "v:%d bias:%d error:%d drift:%d count:%d k:%d",
             v, state->bias, state->error_sum, state->drift, state->count, k);
@@ -469,9 +467,10 @@ static int read_extra_header(FFV1Context *f)
     f->num_h_slices               = 1 + get_symbol(c, state, 0);
     f->num_v_slices               = 1 + get_symbol(c, state, 0);
 
-    if (f->num_h_slices > (unsigned)f->width ||
-        f->num_v_slices > (unsigned)f->height) {
-        av_log(f->avctx, AV_LOG_ERROR, "too many slices\n");
+    if (f->num_h_slices > (unsigned)f->width  || !f->num_h_slices ||
+        f->num_v_slices > (unsigned)f->height || !f->num_v_slices
+       ) {
+        av_log(f->avctx, AV_LOG_ERROR, "slice count invalid\n");
         return AVERROR_INVALIDDATA;
     }
 
@@ -716,7 +715,8 @@ static av_cold int decode_init(AVCodecContext *avctx)
     FFV1Context *f = avctx->priv_data;
     int ret;
 
-    ffv1_common_init(avctx);
+    if ((ret = ffv1_common_init(avctx)) < 0)
+        return ret;
 
     if (avctx->extradata && (ret = read_extra_header(f)) < 0)
         return ret;

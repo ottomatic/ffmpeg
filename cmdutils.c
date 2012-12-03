@@ -41,6 +41,7 @@
 #endif
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
+#include "libavutil/bprint.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/parseutils.h"
@@ -57,6 +58,8 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #endif
+
+static int init_report(const char *env);
 
 struct SwsContext *sws_opts;
 SwrContext *swr_opts;
@@ -197,7 +200,7 @@ static const OptionDef *find_option(const OptionDef *po, const char *name)
     return po;
 }
 
-#if defined(_WIN32) && !defined(__MINGW32CE__)
+#if HAVE_COMMANDLINETOARGVW
 #include <windows.h>
 #include <shellapi.h>
 /* Will be leaked on exit */
@@ -257,7 +260,7 @@ static inline void prepare_app_arguments(int *argc_ptr, char ***argv_ptr)
 {
     /* nothing to do */
 }
-#endif /* WIN32 && !__MINGW32CE__ */
+#endif /* HAVE_COMMANDLINETOARGVW */
 
 int parse_option(void *optctx, const char *opt, const char *arg,
                  const OptionDef *options)
@@ -414,13 +417,14 @@ static void dump_argument(const char *a)
 void parse_loglevel(int argc, char **argv, const OptionDef *options)
 {
     int idx = locate_option(argc, argv, options, "loglevel");
+    const char *env;
     if (!idx)
         idx = locate_option(argc, argv, options, "v");
     if (idx && argv[idx + 1])
         opt_loglevel(NULL, "loglevel", argv[idx + 1]);
     idx = locate_option(argc, argv, options, "report");
-    if (idx || getenv("FFREPORT")) {
-        opt_report("report");
+    if ((env = getenv("FFREPORT")) || idx) {
+        init_report(env);
         if (report_file) {
             int i;
             fprintf(report_file, "Command line:\n");
@@ -440,7 +444,8 @@ int opt_default(void *optctx, const char *opt, const char *arg)
     int consumed = 0;
     char opt_stripped[128];
     const char *p;
-    const AVClass *cc = avcodec_get_class(), *fc = avformat_get_class(), *sc, *swr_class;
+    const AVClass *cc = avcodec_get_class(), *fc = avformat_get_class();
+    const AVClass *sc, *swr_class;
 
     if (!(p = strchr(opt, ':')))
         p = opt + strlen(opt);
@@ -462,8 +467,8 @@ int opt_default(void *optctx, const char *opt, const char *arg)
     }
 #if CONFIG_SWSCALE
     sc = sws_get_class();
-    if (!consumed && (o = av_opt_find(&sc, opt, NULL, 0,
-                         AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ))) {
+    if (!consumed && av_opt_find(&sc, opt, NULL, 0,
+                         AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ)) {
         // XXX we only support sws_flags, not arbitrary sws options
         int ret = av_opt_set(sws_opts, opt, arg, 0);
         if (ret < 0) {
@@ -475,8 +480,8 @@ int opt_default(void *optctx, const char *opt, const char *arg)
 #endif
 #if CONFIG_SWRESAMPLE
     swr_class = swr_get_class();
-    if (!consumed && (o = av_opt_find(&swr_class, opt, NULL, 0,
-                               AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ))) {
+    if (!consumed && av_opt_find(&swr_class, opt, NULL, 0,
+                               AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ)) {
         int ret = av_opt_set(swr_opts, opt, arg, 0);
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Error setting option %s.\n", opt);
@@ -527,24 +532,83 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int opt_report(const char *opt)
+static void expand_filename_template(AVBPrint *bp, const char *template,
+                                     struct tm *tm)
 {
-    char filename[64];
+    int c;
+
+    while ((c = *(template++))) {
+        if (c == '%') {
+            if (!(c = *(template++)))
+                break;
+            switch (c) {
+            case 'p':
+                av_bprintf(bp, "%s", program_name);
+                break;
+            case 't':
+                av_bprintf(bp, "%04d%02d%02d-%02d%02d%02d",
+                           tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                           tm->tm_hour, tm->tm_min, tm->tm_sec);
+                break;
+            case '%':
+                av_bprint_chars(bp, c, 1);
+                break;
+            }
+        } else {
+            av_bprint_chars(bp, c, 1);
+        }
+    }
+}
+
+static int init_report(const char *env)
+{
+    char *filename_template = NULL;
+    char *key, *val;
+    int ret, count = 0;
     time_t now;
     struct tm *tm;
+    AVBPrint filename;
 
     if (report_file) /* already opened */
         return 0;
     time(&now);
     tm = localtime(&now);
-    snprintf(filename, sizeof(filename), "%s-%04d%02d%02d-%02d%02d%02d.log",
-             program_name,
-             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, tm->tm_sec);
-    report_file = fopen(filename, "w");
+
+    while (env && *env) {
+        if ((ret = av_opt_get_key_value(&env, "=", ":", 0, &key, &val)) < 0) {
+            if (count)
+                av_log(NULL, AV_LOG_ERROR,
+                       "Failed to parse FFREPORT environment variable: %s\n",
+                       av_err2str(ret));
+            break;
+        }
+        if (*env)
+            env++;
+        count++;
+        if (!strcmp(key, "file")) {
+            av_free(filename_template);
+            filename_template = val;
+            val = NULL;
+        } else {
+            av_log(NULL, AV_LOG_ERROR, "Unknown key '%s' in FFREPORT\n", key);
+        }
+        av_free(val);
+        av_free(key);
+    }
+
+    av_bprint_init(&filename, 0, 1);
+    expand_filename_template(&filename,
+                             av_x_if_null(filename_template, "%p-%t.log"), tm);
+    av_free(filename_template);
+    if (!av_bprint_is_complete(&filename)) {
+        av_log(NULL, AV_LOG_ERROR, "Out of memory building report file name\n");
+        return AVERROR(ENOMEM);
+    }
+
+    report_file = fopen(filename.str, "w");
     if (!report_file) {
         av_log(NULL, AV_LOG_ERROR, "Failed to open report \"%s\": %s\n",
-               filename, strerror(errno));
+               filename.str, strerror(errno));
         return AVERROR(errno);
     }
     av_log_set_callback(log_callback_report);
@@ -554,9 +618,15 @@ int opt_report(const char *opt)
            program_name,
            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
            tm->tm_hour, tm->tm_min, tm->tm_sec,
-           filename);
+           filename.str);
     av_log_set_level(FFMAX(av_log_get_level(), AV_LOG_VERBOSE));
+    av_bprint_finalize(&filename, NULL);
     return 0;
+}
+
+int opt_report(const char *opt)
+{
+    return init_report(NULL);
 }
 
 int opt_max_alloc(void *optctx, const char *opt, const char *arg)
@@ -701,12 +771,13 @@ int show_version(void *optctx, const char *opt, const char *arg)
 
 int show_license(void *optctx, const char *opt, const char *arg)
 {
-    printf(
 #if CONFIG_NONFREE
+    printf(
     "This version of %s has nonfree parts compiled in.\n"
     "Therefore it is not legally redistributable.\n",
-    program_name
+    program_name );
 #elif CONFIG_GPLV3
+    printf(
     "%s is free software; you can redistribute it and/or modify\n"
     "it under the terms of the GNU General Public License as published by\n"
     "the Free Software Foundation; either version 3 of the License, or\n"
@@ -719,8 +790,9 @@ int show_license(void *optctx, const char *opt, const char *arg)
     "\n"
     "You should have received a copy of the GNU General Public License\n"
     "along with %s.  If not, see <http://www.gnu.org/licenses/>.\n",
-    program_name, program_name, program_name
+    program_name, program_name, program_name );
 #elif CONFIG_GPL
+    printf(
     "%s is free software; you can redistribute it and/or modify\n"
     "it under the terms of the GNU General Public License as published by\n"
     "the Free Software Foundation; either version 2 of the License, or\n"
@@ -734,8 +806,9 @@ int show_license(void *optctx, const char *opt, const char *arg)
     "You should have received a copy of the GNU General Public License\n"
     "along with %s; if not, write to the Free Software\n"
     "Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA\n",
-    program_name, program_name, program_name
+    program_name, program_name, program_name );
 #elif CONFIG_LGPLV3
+    printf(
     "%s is free software; you can redistribute it and/or modify\n"
     "it under the terms of the GNU Lesser General Public License as published by\n"
     "the Free Software Foundation; either version 3 of the License, or\n"
@@ -748,8 +821,9 @@ int show_license(void *optctx, const char *opt, const char *arg)
     "\n"
     "You should have received a copy of the GNU Lesser General Public License\n"
     "along with %s.  If not, see <http://www.gnu.org/licenses/>.\n",
-    program_name, program_name, program_name
+    program_name, program_name, program_name );
 #else
+    printf(
     "%s is free software; you can redistribute it and/or\n"
     "modify it under the terms of the GNU Lesser General Public\n"
     "License as published by the Free Software Foundation; either\n"
@@ -763,9 +837,8 @@ int show_license(void *optctx, const char *opt, const char *arg)
     "You should have received a copy of the GNU Lesser General Public\n"
     "License along with %s; if not, write to the Free Software\n"
     "Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA\n",
-    program_name, program_name, program_name
+    program_name, program_name, program_name );
 #endif
-    );
 
     return 0;
 }
@@ -820,7 +893,7 @@ int show_formats(void *optctx, const char *opt, const char *arg)
 
 #define PRINT_CODEC_SUPPORTED(codec, field, type, list_name, term, get_name) \
     if (codec->field) {                                                      \
-        const type *p = c->field;                                            \
+        const type *p = codec->field;                                        \
                                                                              \
         printf("    Supported " list_name ":");                              \
         while (*p != term) {                                                 \
@@ -918,7 +991,7 @@ static unsigned get_codecs_sorted(const AVCodecDescriptor ***rcodecs)
     while ((desc = avcodec_descriptor_next(desc)))
         nb_codecs++;
     if (!(codecs = av_calloc(nb_codecs, sizeof(*codecs)))) {
-        av_log(0, AV_LOG_ERROR, "Out of memory\n");
+        av_log(NULL, AV_LOG_ERROR, "Out of memory\n");
         exit(1);
     }
     desc = NULL;
@@ -1315,6 +1388,7 @@ int cmdutils_read_file(const char *filename, char **bufptr, size_t *size)
     fseek(f, 0, SEEK_SET);
     if (*size == (size_t)-1) {
         av_log(NULL, AV_LOG_ERROR, "IO error: %s\n", strerror(errno));
+        fclose(f);
         return AVERROR(errno);
     }
     *bufptr = av_malloc(*size + 1);

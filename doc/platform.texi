@@ -1,8 +1,8 @@
 \input texinfo @c -*- texinfo -*-
 
-@settitle Platform Specific information
+@settitle Platform Specific Information
 @titlepage
-@center @titlefont{Platform Specific information}
+@center @titlefont{Platform Specific Information}
 @end titlepage
 
 @top
@@ -77,8 +77,7 @@ For information about compiling FFmpeg on OS/2 see
 @chapter Windows
 
 To get help and instructions for building FFmpeg under Windows, check out
-the FFmpeg Windows Help Forum at
-@url{http://ffmpeg.arrozcru.org/}.
+the FFmpeg Windows Help Forum at @url{http://ffmpeg.zeranoe.com/forum/}.
 
 @section Native Windows compilation using MinGW or MinGW-w64
 
@@ -115,7 +114,7 @@ wrapper.
 You will need the following prerequisites:
 
 @itemize
-@item @uref{https://github.com/rbultje/c99-to-c89/, C99-to-C89 Converter & Wrapper}
+@item @uref{https://github.com/libav/c99-to-c89/, C99-to-C89 Converter & Wrapper}
 @item @uref{http://code.google.com/p/msinttypes/, msinttypes}
 @item @uref{http://www.mingw.org/, MSYS}
 @item @uref{http://yasm.tortall.net/, YASM}
@@ -143,7 +142,7 @@ make
 make install
 @end example
 
-If you wish to compile static libraries, add @code{--enable-shared} to your
+If you wish to compile shared libraries, add @code{--enable-shared} to your
 configure options. Note that due to the way MSVC handles DLL imports and
 exports, you cannot compile static and shared libraries at the same time, and
 enabling shared libraries will automatically disable the static ones.

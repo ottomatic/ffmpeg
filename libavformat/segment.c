@@ -58,7 +58,6 @@ typedef struct {
     AVFormatContext *avf;
     char *format;          ///< format to use for output segment files
     char *list;            ///< filename for the segment list file
-    int   list_count;      ///< list counter
     int   list_flags;      ///< flags affecting list generation
     int   list_size;       ///< number of entries for the segment list file
     double list_max_segment_time; ///< max segment time in the current list
@@ -108,9 +107,20 @@ static int segment_mux_init(AVFormatContext *s)
 
     for (i = 0; i < s->nb_streams; i++) {
         AVStream *st;
+        AVCodecContext *icodec, *ocodec;
+
         if (!(st = avformat_new_stream(oc, NULL)))
             return AVERROR(ENOMEM);
-        avcodec_copy_context(st->codec, s->streams[i]->codec);
+        icodec = s->streams[i]->codec;
+        ocodec = st->codec;
+        avcodec_copy_context(ocodec, icodec);
+        if (!oc->oformat->codec_tag ||
+            av_codec_get_id (oc->oformat->codec_tag, icodec->codec_tag) == ocodec->codec_id ||
+            av_codec_get_tag(oc->oformat->codec_tag, icodec->codec_id) <= 0) {
+            ocodec->codec_tag = icodec->codec_tag;
+        } else {
+            ocodec->codec_tag = 0;
+        }
         st->sample_aspect_ratio = s->streams[i]->sample_aspect_ratio;
     }
 
@@ -119,27 +129,28 @@ static int segment_mux_init(AVFormatContext *s)
 
 static int segment_start(AVFormatContext *s, int write_header)
 {
-    SegmentContext *c = s->priv_data;
-    AVFormatContext *oc = c->avf;
+    SegmentContext *seg = s->priv_data;
+    AVFormatContext *oc = seg->avf;
     int err = 0;
 
     if (write_header) {
         avformat_free_context(oc);
-        c->avf = NULL;
+        seg->avf = NULL;
         if ((err = segment_mux_init(s)) < 0)
             return err;
-        oc = c->avf;
+        oc = seg->avf;
     }
 
-    if (c->segment_idx_wrap)
-        c->segment_idx %= c->segment_idx_wrap;
+    seg->segment_idx++;
+    if (seg->segment_idx_wrap)
+        seg->segment_idx %= seg->segment_idx_wrap;
 
     if (av_get_frame_filename(oc->filename, sizeof(oc->filename),
-                              s->filename, c->segment_idx++) < 0) {
+                              s->filename, seg->segment_idx) < 0) {
         av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", s->filename);
         return AVERROR(EINVAL);
     }
-    c->segment_count++;
+    seg->segment_count++;
 
     if ((err = avio_open2(&oc->pb, oc->filename, AVIO_FLAG_WRITE,
                           &s->interrupt_callback, NULL)) < 0)
@@ -170,7 +181,7 @@ static int segment_list_open(AVFormatContext *s)
     if (seg->list_type == LIST_TYPE_M3U8) {
         avio_printf(seg->list_pb, "#EXTM3U\n");
         avio_printf(seg->list_pb, "#EXT-X-VERSION:3\n");
-        avio_printf(seg->list_pb, "#EXT-X-MEDIA-SEQUENCE:%d\n", seg->list_count);
+        avio_printf(seg->list_pb, "#EXT-X-MEDIA-SEQUENCE:%d\n", seg->segment_idx);
         avio_printf(seg->list_pb, "#EXT-X-ALLOWCACHE:%d\n",
                     !!(seg->list_flags & SEGMENT_LIST_FLAG_CACHE));
         if (seg->list_flags & SEGMENT_LIST_FLAG_LIVE)
@@ -191,7 +202,6 @@ static void segment_list_close(AVFormatContext *s)
                         (int)ceil(seg->list_max_segment_time));
         avio_printf(seg->list_pb, "#EXT-X-ENDLIST\n");
     }
-    seg->list_count++;
 
     avio_close(seg->list_pb);
 }
@@ -386,7 +396,7 @@ static int seg_write_header(AVFormatContext *s)
     }
     if (seg->oformat->flags & AVFMT_NOFILE) {
         av_log(s, AV_LOG_ERROR, "format %s not supported.\n",
-               oc->oformat->name);
+               seg->oformat->name);
         ret = AVERROR(EINVAL);
         goto fail;
     }
@@ -396,7 +406,7 @@ static int seg_write_header(AVFormatContext *s)
     oc = seg->avf;
 
     if (av_get_frame_filename(oc->filename, sizeof(oc->filename),
-                              s->filename, seg->segment_idx++) < 0) {
+                              s->filename, seg->segment_idx) < 0) {
         ret = AVERROR(EINVAL);
         goto fail;
     }
@@ -550,7 +560,7 @@ AVOutputFormat ff_segment_muxer = {
     .name           = "segment",
     .long_name      = NULL_IF_CONFIG_SMALL("segment"),
     .priv_data_size = sizeof(SegmentContext),
-    .flags          = AVFMT_NOFILE,
+    .flags          = AVFMT_NOFILE|AVFMT_GLOBALHEADER,
     .write_header   = seg_write_header,
     .write_packet   = seg_write_packet,
     .write_trailer  = seg_write_trailer,

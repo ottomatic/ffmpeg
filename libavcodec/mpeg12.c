@@ -1278,7 +1278,12 @@ static int mpeg_decode_postinit(AVCodecContext *avctx)
             return -2;
 
         avcodec_set_dimensions(avctx, s->width, s->height);
-        avctx->bit_rate          = s->bit_rate;
+        if (avctx->codec_id == AV_CODEC_ID_MPEG2VIDEO && s->bit_rate) {
+            avctx->rc_max_rate = s->bit_rate;
+        } else if (avctx->codec_id == AV_CODEC_ID_MPEG1VIDEO && s->bit_rate &&
+                   (s->bit_rate != 0x3FFFF*400 || s->vbv_delay != 0xFFFF)) {
+            avctx->bit_rate = s->bit_rate;
+        }
         s1->save_aspect_info     = s->aspect_ratio_info;
         s1->save_width           = s->width;
         s1->save_height          = s->height;
@@ -1377,6 +1382,7 @@ static int mpeg1_decode_picture(AVCodecContext *avctx,
         return -1;
 
     vbv_delay = get_bits(&s->gb, 16);
+    s->vbv_delay = vbv_delay;
     if (s->pict_type == AV_PICTURE_TYPE_P || s->pict_type == AV_PICTURE_TYPE_B) {
         s->full_pel[0] = get_bits1(&s->gb);
         f_code = get_bits(&s->gb, 3);
@@ -2131,9 +2137,9 @@ static void mpeg_decode_user_data(AVCodecContext *avctx,
             }
 
 /*        for(i=0; !(!p[i-2] && !p[i-1] && p[i]==1) && i<buf_size; i++){
-            av_log(0,0, "%c", p[i]);
+            av_log(avctx, AV_LOG_ERROR, "%c", p[i]);
         }
-            av_log(0,0, "\n");*/
+            av_log(avctx, AV_LOG_ERROR, "\n");*/
     }
 
     /* we parse the DTG active format information */
@@ -2521,6 +2527,8 @@ static int mpeg_decode_frame(AVCodecContext *avctx,
     AVFrame *picture = data;
     MpegEncContext *s2 = &s->mpeg_enc_ctx;
     av_dlog(avctx, "fill_buffer\n");
+
+    s2->current_picture_ptr = NULL;
 
     if (buf_size == 0 || (buf_size == 4 && AV_RB32(buf) == SEQ_END_CODE)) {
         /* special case for last picture */

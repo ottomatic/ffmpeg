@@ -143,6 +143,10 @@ int av_parse_video_size(int *width_ptr, int *height_ptr, const char *str)
         if (*p)
             p++;
         height = strtol(p, (void*)&p, 10);
+
+        /* trailing extraneous data detected, like in 123x345foobar */
+        if (*p)
+            return AVERROR(EINVAL);
     }
     if (width <= 0 || height <= 0)
         return AVERROR(EINVAL);
@@ -450,7 +454,8 @@ char *av_small_strptime(const char *p, const char *fmt, struct tm *dt)
             c = *fmt++;
             switch(c) {
             case 'H':
-                val = date_get_num(&p, 0, 23, 2);
+            case 'J':
+                val = date_get_num(&p, 0, c == 'H' ? 23 : INT_MAX, 2);
                 if (val == -1)
                     return NULL;
                 dt->tm_hour = val;
@@ -577,7 +582,7 @@ int av_parse_time(int64_t *timeval, const char *timestr, int duration)
             ++p;
         }
         /* parse timestr as HH:MM:SS */
-        q = av_small_strptime(p, time_fmt[0], &dt);
+        q = av_small_strptime(p, "%J:%M:%S", &dt);
         if (!q) {
             /* parse timestr as S+ */
             dt.tm_sec = strtol(p, (void *)&q, 10);

@@ -27,13 +27,14 @@
  * Note that libavcodec only handles codecs (mpeg, mpeg4, etc...),
  * not file formats (avi, vob, mp4, mov, mkv, mxf, flv, mpegts, mpegps, etc...). See library 'libavformat' for the
  * format handling
+ * @example doc/examples/decoding_encoding.c
  */
 
 #include <math.h>
 
 #include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
-#include <libavutil/audioconvert.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/common.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mathematics.h>

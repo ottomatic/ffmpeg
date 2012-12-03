@@ -6,6 +6,8 @@ LIBVERSION := $(lib$(NAME)_VERSION)
 LIBMAJOR   := $(lib$(NAME)_VERSION_MAJOR)
 INCINSTDIR := $(INCDIR)/lib$(NAME)
 
+INSTHEADERS := $(INSTHEADERS) $(HEADERS:%=$(SUBDIR)%)
+
 all-$(CONFIG_STATIC): $(SUBDIR)$(LIBNAME)
 all-$(CONFIG_SHARED): $(SUBDIR)$(SLIBNAME)
 
@@ -15,12 +17,19 @@ $(SUBDIR)%-test.o: $(SUBDIR)%-test.c
 $(SUBDIR)%-test.o: $(SUBDIR)%.c
 	$(COMPILE_C)
 
+$(SUBDIR)%-test.i: $(SUBDIR)%-test.c
+	$(CC) $(CCFLAGS) $(CC_E) $<
+
+$(SUBDIR)%-test.i: $(SUBDIR)%.c
+	$(CC) $(CCFLAGS) $(CC_E) $<
+
 $(SUBDIR)x86/%.o: $(SUBDIR)x86/%.asm
 	$(DEPYASM) $(YASMFLAGS) -I $(<D)/ -M -o $@ $< > $(@:.o=.d)
 	$(YASM) $(YASMFLAGS) -I $(<D)/ -o $@ $<
 
-$(OBJS) $(OBJS:.o=.s) $(SUBDIR)%.h.o $(TESTOBJS): CPPFLAGS += -DHAVE_AV_CONFIG_H
-$(TESTOBJS): CPPFLAGS += -DTEST
+LIBOBJS := $(OBJS) $(SUBDIR)%.h.o $(TESTOBJS)
+$(LIBOBJS) $(LIBOBJS:.o=.s) $(LIBOBJS:.o=.i):   CPPFLAGS += -DHAVE_AV_CONFIG_H
+$(TESTOBJS) $(TESTOBJS:.o=.i): CPPFLAGS += -DTEST
 
 $(SUBDIR)$(LIBNAME): $(OBJS)
 	$(RM) $@

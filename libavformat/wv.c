@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/audioconvert.h"
+#include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
 #include "avformat.h"
@@ -341,7 +341,7 @@ static int wv_read_packet(AVFormatContext *s, AVPacket *pkt)
     pkt->stream_index = 0;
     wc->block_parsed  = 1;
     pkt->pts          = wc->soff;
-    block_samples     = AV_RN32(wc->extra);
+    block_samples     = AV_RL32(wc->extra);
     if (block_samples > INT32_MAX)
         av_log(s, AV_LOG_WARNING,
                "Too many samples in block: %"PRIu32"\n", block_samples);

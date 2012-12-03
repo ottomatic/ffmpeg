@@ -22,11 +22,10 @@
 
 #include "avcodec.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "bytestream.h"
 #define BITSTREAM_READER_LE
 #include "get_bits.h"
-// for av_memcpy_backptr
-#include "libavutil/lzo.h"
 
 typedef struct XanContext {
     AVCodecContext *avctx;
@@ -277,7 +276,8 @@ static int xan_decode_frame_type0(AVCodecContext *avctx)
         ybuf[j+1] = cur << 1;
         last = cur;
     }
-    ybuf[j]  = last << 1;
+    if(j < avctx->width)
+        ybuf[j]  = last << 1;
     prev_buf = ybuf;
     ybuf += avctx->width;
 
@@ -290,7 +290,8 @@ static int xan_decode_frame_type0(AVCodecContext *avctx)
             ybuf[j+1] = cur << 1;
             last = cur;
         }
-        ybuf[j] = last << 1;
+        if(j < avctx->width)
+            ybuf[j] = last << 1;
         prev_buf = ybuf;
         ybuf += avctx->width;
     }
@@ -350,7 +351,8 @@ static int xan_decode_frame_type1(AVCodecContext *avctx)
             ybuf[j+1] = cur;
             last = cur;
         }
-        ybuf[j] = last;
+        if(j < avctx->width)
+            ybuf[j] = last;
         ybuf += avctx->width;
     }
 

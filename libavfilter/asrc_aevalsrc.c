@@ -23,9 +23,9 @@
  * eval audio source
  */
 
-#include "libavutil/audioconvert.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
+#include "libavutil/channel_layout.h"
 #include "libavutil/eval.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
@@ -237,10 +237,20 @@ static int request_frame(AVFilterLink *outlink)
     samplesref->audio->sample_rate = eval->sample_rate;
     eval->pts += eval->nb_samples;
 
-    ff_filter_samples(outlink, samplesref);
+    ff_filter_frame(outlink, samplesref);
 
     return 0;
 }
+
+static const AVFilterPad aevalsrc_outputs[] = {
+    {
+        .name          = "default",
+        .type          = AVMEDIA_TYPE_AUDIO,
+        .config_props  = config_props,
+        .request_frame = request_frame,
+    },
+    { NULL }
+};
 
 AVFilter avfilter_asrc_aevalsrc = {
     .name        = "aevalsrc",
@@ -250,13 +260,7 @@ AVFilter avfilter_asrc_aevalsrc = {
     .init        = init,
     .uninit      = uninit,
     .priv_size   = sizeof(EvalContext),
-
-    .inputs      = (const AVFilterPad[]) {{ .name = NULL}},
-
-    .outputs     = (const AVFilterPad[]) {{ .name = "default",
-                                      .type = AVMEDIA_TYPE_AUDIO,
-                                      .config_props = config_props,
-                                      .request_frame = request_frame, },
-                                    { .name = NULL}},
-    .priv_class = &aevalsrc_class,
+    .inputs      = NULL,
+    .outputs     = aevalsrc_outputs,
+    .priv_class  = &aevalsrc_class,
 };

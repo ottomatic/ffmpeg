@@ -35,12 +35,12 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "libavutil/channel_layout.h"
+#include "libavutil/libm.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "dsputil.h"
 #include "fft.h"
-#include "libavutil/audioconvert.h"
-#include "libavutil/libm.h"
 #include "sinewin.h"
 
 #include "imcdata.h"
@@ -176,8 +176,10 @@ static av_cold int imc_decode_init(AVCodecContext *avctx)
     IMCContext *q = avctx->priv_data;
     double r1, r2;
 
-    if ((avctx->codec_id == AV_CODEC_ID_IMC && avctx->channels != 1)
-        || (avctx->codec_id == AV_CODEC_ID_IAC && avctx->channels > 2)) {
+    if (avctx->codec_id == AV_CODEC_ID_IMC)
+        avctx->channels = 1;
+
+    if (avctx->channels > 2) {
         av_log_ask_for_sample(avctx, "Number of channels is not supported\n");
         return AVERROR_PATCHWELCOME;
     }
@@ -803,6 +805,13 @@ static int imc_decode_block(AVCodecContext *avctx, IMCContext *q, int ch)
         imc_decode_level_coefficients2(q, chctx->levlCoeffBuf, chctx->old_floor,
                                        chctx->flcoeffs1, chctx->flcoeffs2);
 
+    for(i=0; i<BANDS; i++) {
+        if(chctx->flcoeffs1[i] > INT_MAX) {
+            av_log(avctx, AV_LOG_ERROR, "scalefactor out of range\n");
+            return AVERROR_INVALIDDATA;
+        }
+    }
+
     memcpy(chctx->old_floor, chctx->flcoeffs1, 32 * sizeof(float));
 
     counter = 0;
@@ -977,6 +986,14 @@ static av_cold int imc_decode_close(AVCodecContext * avctx)
     return 0;
 }
 
+static av_cold void flush(AVCodecContext *avctx)
+{
+    IMCContext *q = avctx->priv_data;
+
+    q->chctx[0].decoder_reset =
+    q->chctx[1].decoder_reset = 1;
+}
+
 #if CONFIG_IMC_DECODER
 AVCodec ff_imc_decoder = {
     .name           = "imc",
@@ -986,6 +1003,7 @@ AVCodec ff_imc_decoder = {
     .init           = imc_decode_init,
     .close          = imc_decode_close,
     .decode         = imc_decode_frame,
+    .flush          = flush,
     .capabilities   = CODEC_CAP_DR1,
     .long_name      = NULL_IF_CONFIG_SMALL("IMC (Intel Music Coder)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
@@ -1001,6 +1019,7 @@ AVCodec ff_iac_decoder = {
     .init           = imc_decode_init,
     .close          = imc_decode_close,
     .decode         = imc_decode_frame,
+    .flush          = flush,
     .capabilities   = CODEC_CAP_DR1,
     .long_name      = NULL_IF_CONFIG_SMALL("IAC (Indeo Audio Coder)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,

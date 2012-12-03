@@ -246,13 +246,20 @@ static void blur(uint8_t       *dst, const int dst_linesize,
     }
 }
 
-static int end_frame(AVFilterLink *inlink)
+static int filter_frame(AVFilterLink *inlink, AVFilterBufferRef *inpic)
 {
     SmartblurContext  *sblur  = inlink->dst->priv;
-    AVFilterBufferRef *inpic  = inlink->cur_buf;
-    AVFilterBufferRef *outpic = inlink->dst->outputs[0]->out_buf;
+    AVFilterLink *outlink     = inlink->dst->outputs[0];
+    AVFilterBufferRef *outpic;
     int cw = inlink->w >> sblur->hsub;
     int ch = inlink->h >> sblur->vsub;
+
+    outpic = ff_get_video_buffer(outlink, AV_PERM_WRITE, outlink->w, outlink->h);
+    if (!outpic) {
+        avfilter_unref_bufferp(&inpic);
+        return AVERROR(ENOMEM);
+    }
+    avfilter_copy_buffer_ref_props(outpic, inpic);
 
     blur(outpic->data[0], outpic->linesize[0],
          inpic->data[0],  inpic->linesize[0],
@@ -270,8 +277,28 @@ static int end_frame(AVFilterLink *inlink)
              sblur->chroma.filter_context);
     }
 
-    return ff_end_frame(inlink->dst->outputs[0]);
+    avfilter_unref_bufferp(&inpic);
+    return ff_filter_frame(outlink, outpic);
 }
+
+static const AVFilterPad smartblur_inputs[] = {
+    {
+        .name         = "default",
+        .type         = AVMEDIA_TYPE_VIDEO,
+        .filter_frame = filter_frame,
+        .config_props = config_props,
+        .min_perms    = AV_PERM_READ,
+    },
+    { NULL }
+};
+
+static const AVFilterPad smartblur_outputs[] = {
+    {
+        .name = "default",
+        .type = AVMEDIA_TYPE_VIDEO,
+    },
+    { NULL }
+};
 
 AVFilter avfilter_vf_smartblur = {
     .name        = "smartblur",
@@ -282,22 +309,6 @@ AVFilter avfilter_vf_smartblur = {
     .init          = init,
     .uninit        = uninit,
     .query_formats = query_formats,
-
-    .inputs = (const AVFilterPad[]) {
-        {
-            .name         = "default",
-            .type         = AVMEDIA_TYPE_VIDEO,
-            .end_frame    = end_frame,
-            .config_props = config_props,
-            .min_perms    = AV_PERM_READ,
-        },
-        { .name = NULL }
-    },
-    .outputs = (const AVFilterPad[]) {
-        {
-            .name         = "default",
-            .type         = AVMEDIA_TYPE_VIDEO,
-        },
-        { .name = NULL }
-    }
+    .inputs        = smartblur_inputs,
+    .outputs       = smartblur_outputs,
 };

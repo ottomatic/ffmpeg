@@ -25,6 +25,7 @@
 #include <stddef.h>
 
 #include "libavutil/avutil.h"
+#include "libavutil/dict.h"
 #include "libavutil/log.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/pixfmt.h"
@@ -116,6 +117,7 @@ typedef struct AVFilterBufferRefAudioProps {
     uint64_t channel_layout;    ///< channel layout of audio buffer
     int nb_samples;             ///< number of audio samples per channel
     int sample_rate;            ///< audio buffer sample rate
+    int channels;               ///< number of channels
 } AVFilterBufferRefAudioProps;
 
 /**
@@ -272,26 +274,13 @@ struct AVFilterPad {
     int rej_perms;
 
     /**
-     * Callback called before passing the first slice of a new frame. If
-     * NULL, the filter layer will default to storing a reference to the
-     * picture inside the link structure.
-     *
-     * The reference given as argument is also available in link->cur_buf.
-     * It can be stored elsewhere or given away, but then clearing
-     * link->cur_buf is advised, as it is automatically unreferenced.
-     * The reference must not be unreferenced before end_frame(), as it may
-     * still be in use by the automatic copy mechanism.
-     *
-     * Input video pads only.
-     *
-     * @return >= 0 on success, a negative AVERROR on error. picref will be
-     * unreferenced by the caller in case of error.
+     * @deprecated unused
      */
     int (*start_frame)(AVFilterLink *link, AVFilterBufferRef *picref);
 
     /**
      * Callback function to get a video buffer. If NULL, the filter system will
-     * use avfilter_default_get_video_buffer().
+     * use ff_default_get_video_buffer().
      *
      * Input video pads only.
      */
@@ -299,7 +288,7 @@ struct AVFilterPad {
 
     /**
      * Callback function to get an audio buffer. If NULL, the filter system will
-     * use avfilter_default_get_audio_buffer().
+     * use ff_default_get_audio_buffer().
      *
      * Input audio pads only.
      */
@@ -307,37 +296,26 @@ struct AVFilterPad {
                                            int nb_samples);
 
     /**
-     * Callback called after the slices of a frame are completely sent. If
-     * NULL, the filter layer will default to releasing the reference stored
-     * in the link structure during start_frame().
-     *
-     * Input video pads only.
-     *
-     * @return >= 0 on success, a negative AVERROR on error.
+     * @deprecated unused
      */
     int (*end_frame)(AVFilterLink *link);
 
     /**
-     * Slice drawing callback. This is where a filter receives video data
-     * and should do its processing.
-     *
-     * Input video pads only.
-     *
-     * @return >= 0 on success, a negative AVERROR on error.
+     * @deprecated unused
      */
     int (*draw_slice)(AVFilterLink *link, int y, int height, int slice_dir);
 
     /**
-     * Samples filtering callback. This is where a filter receives audio data
-     * and should do its processing.
+     * Filtering callback. This is where a filter receives a frame with
+     * audio/video data and should do its processing.
      *
-     * Input audio pads only.
+     * Input pads only.
      *
      * @return >= 0 on success, a negative AVERROR on error. This function
-     * must ensure that samplesref is properly unreferenced on error if it
+     * must ensure that frame is properly unreferenced on error if it
      * hasn't been passed on to another filter.
      */
-    int (*filter_samples)(AVFilterLink *link, AVFilterBufferRef *samplesref);
+    int (*filter_frame)(AVFilterLink *link, AVFilterBufferRef *frame);
 
     /**
      * Frame poll callback. This returns the number of immediately available
@@ -533,7 +511,7 @@ struct AVFilterLink {
     int h;                      ///< agreed upon image height
     AVRational sample_aspect_ratio; ///< agreed upon sample aspect ratio
     /* These parameters apply only to audio */
-    uint64_t channel_layout;    ///< channel layout of current buffer (see libavutil/audioconvert.h)
+    uint64_t channel_layout;    ///< channel layout of current buffer (see libavutil/channel_layout.h)
     int sample_rate;            ///< samples per second
 
     int format;                 ///< agreed upon media format
@@ -676,7 +654,7 @@ struct AVFilterLink {
     int partial_buf_size;
 
     /**
-     * Minimum number of samples to filter at once. If filter_samples() is
+     * Minimum number of samples to filter at once. If filter_frame() is
      * called with fewer samples, it will accumulate them in partial_buf.
      * This field and the related ones must not be changed after filtering
      * has started.
@@ -685,7 +663,7 @@ struct AVFilterLink {
     int min_samples;
 
     /**
-     * Maximum number of samples to filter at once. If filter_samples() is
+     * Maximum number of samples to filter at once. If filter_frame() is
      * called with more samples, it will split them.
      */
     int max_samples;
@@ -701,7 +679,7 @@ struct AVFilterLink {
 
     /**
      * True if the link is closed.
-     * If set, all attemps of start_frame, filter_samples or request_frame
+     * If set, all attemps of start_frame, filter_frame or request_frame
      * will fail with AVERROR_EOF, and if necessary the reference will be
      * destroyed.
      * If request_frame returns AVERROR_EOF, this flag is set on the

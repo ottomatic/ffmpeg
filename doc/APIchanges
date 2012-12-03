@@ -1,5 +1,5 @@
 Never assume the API of libav* to be stable unless at least 1 month has passed
-since the last major version increase.
+since the last major version increase or the API was added.
 
 The last version increases were:
 libavcodec:    2012-01-27
@@ -14,6 +14,27 @@ libavutil:     2012-10-22
 
 
 API changes, most recent first:
+
+2012-11-25 - xxxxxxx - lavu 52.9.100 - opt.h
+  Add the following convenience functions to opt.h:
+   av_opt_get_image_size
+   av_opt_get_pixel_fmt
+   av_opt_get_sample_fmt
+   av_opt_set_image_size
+   av_opt_set_pixel_fmt
+   av_opt_set_sample_fmt
+
+2012-11-17 - xxxxxxx - lavu 52.8.100 - bprint.h
+  Add av_bprint_strftime().
+
+2012-11-15 - xxxxxxx - lavu 52.7.100 - opt.h
+  Add av_opt_get_key_value().
+
+2012-11-13 - xxxxxxx - lavfi 3.23.100 - avfilter.h
+  Add channels field to AVFilterBufferRefAudioProps.
+
+2012-11-03 - xxxxxxx - lavu 52.3.100 - opt.h
+  Add AV_OPT_TYPE_SAMPLE_FMT value to AVOptionType enum.
 
 2012-10-21 - xxxxxxx - lavc  54.68.100 - avcodec.h
                        lavfi  3.20.100 - avfilter.h
@@ -104,6 +125,12 @@ API changes, most recent first:
 2012-03-26 - a67d9cf - lavfi 2.66.100
   Add avfilter_fill_frame_from_{audio_,}buffer_ref() functions.
 
+2012-xx-xx - xxxxxxx - lavu 52.2.0 - audioconvert.h
+  Rename audioconvert.h to channel_layout.h. audioconvert.h is now deprecated.
+
+2012-xx-xx - xxxxxxx - lavu 52.1.0 - intmath.h
+  Add av_ctz() for trailing zero bit count
+
 2012-10-18 - xxxxxxx - lavu 51.45.0 - error.h
   Add AVERROR_EXPERIMENTAL
 
@@ -114,7 +141,6 @@ API changes, most recent first:
 
 2012-10-xx - xxxxxxx - lavu 51.43.0 - aes.h, md5.h, sha.h, tree.h
   Add functions for allocating the opaque contexts for the algorithms,
-  deprecate the context size variables.
 
 2012-10-xx - xxxxxxx - lavf 54.18.0 - avio.h
   Add avio_closep to complement avio_close.
@@ -276,6 +302,10 @@ API changes, most recent first:
 
 2012-01-24 - 0c3577b - lavfi 2.60.100
   Add avfilter_graph_dump.
+
+2012-03-20 - 3c90cc2 - lavfo 54.2.0
+  Deprecate av_read_packet(), use av_read_frame() with
+  AVFMT_FLAG_NOPARSE | AVFMT_FLAG_NOFILLIN in AVFormatContext.flags
 
 2012-03-05 - lavc 54.8.0
   6699d07 Add av_get_exact_bits_per_sample()

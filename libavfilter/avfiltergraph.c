@@ -23,8 +23,9 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "libavutil/audioconvert.h"
 #include "libavutil/avassert.h"
+#include "libavutil/channel_layout.h"
+#include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavcodec/avcodec.h" // avcodec_find_best_pix_fmt_of_2()
 #include "avfilter.h"
@@ -32,14 +33,19 @@
 #include "formats.h"
 #include "internal.h"
 
-#include "libavutil/audioconvert.h"
-#include "libavutil/avassert.h"
-#include "libavutil/common.h"
-#include "libavutil/log.h"
+#define OFFSET(x) offsetof(AVFilterGraph,x)
+
+static const AVOption options[]={
+{"scale_sws_opts"       , "default scale filter options"        , OFFSET(scale_sws_opts)        ,  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, 0 },
+{"aresample_swr_opts"   , "default aresample filter options"    , OFFSET(aresample_swr_opts)    ,  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, 0 },
+{0}
+};
+
 
 static const AVClass filtergraph_class = {
     .class_name = "AVFilterGraph",
     .item_name  = av_default_item_name,
+    .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
     .category   = AV_CLASS_CATEGORY_FILTER,
 };
@@ -61,6 +67,7 @@ void avfilter_graph_free(AVFilterGraph **graph)
         avfilter_free((*graph)->filters[(*graph)->filter_count - 1]);
     av_freep(&(*graph)->sink_links);
     av_freep(&(*graph)->scale_sws_opts);
+    av_freep(&(*graph)->aresample_swr_opts);
     av_freep(&(*graph)->filters);
     av_freep(graph);
 }
@@ -118,22 +125,25 @@ static int graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
     int i, j;
 
     for (i = 0; i < graph->filter_count; i++) {
+        const AVFilterPad *pad;
         filt = graph->filters[i];
 
         for (j = 0; j < filt->nb_inputs; j++) {
             if (!filt->inputs[j] || !filt->inputs[j]->src) {
+                pad = &filt->input_pads[j];
                 av_log(log_ctx, AV_LOG_ERROR,
-                       "Input pad \"%s\" for the filter \"%s\" of type \"%s\" not connected to any source\n",
-                       filt->input_pads[j].name, filt->name, filt->filter->name);
+                       "Input pad \"%s\" with type %s of the filter instance \"%s\" of %s not connected to any source\n",
+                       pad->name, av_get_media_type_string(pad->type), filt->name, filt->filter->name);
                 return AVERROR(EINVAL);
             }
         }
 
         for (j = 0; j < filt->nb_outputs; j++) {
             if (!filt->outputs[j] || !filt->outputs[j]->dst) {
+                pad = &filt->output_pads[j];
                 av_log(log_ctx, AV_LOG_ERROR,
-                       "Output pad \"%s\" for the filter \"%s\" of type \"%s\" not connected to any destination\n",
-                       filt->output_pads[j].name, filt->name, filt->filter->name);
+                       "Output pad \"%s\" with type %s of the filter instance \"%s\" of %s not connected to any destination\n",
+                       pad->name, av_get_media_type_string(pad->type), filt->name, filt->filter->name);
                 return AVERROR(EINVAL);
             }
         }
@@ -378,7 +388,7 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                     snprintf(inst_name, sizeof(inst_name), "auto-inserted resampler %d",
                              resampler_count++);
                     if ((ret = avfilter_graph_create_filter(&convert, filter,
-                                                            inst_name, NULL, NULL, graph)) < 0)
+                                                            inst_name, graph->aresample_swr_opts, NULL, graph)) < 0)
                         return ret;
                     break;
                 default:

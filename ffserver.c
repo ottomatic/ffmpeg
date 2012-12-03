@@ -29,6 +29,7 @@
 #endif
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "libavformat/avformat.h"
 // FIXME those are internal headers, ffserver _really_ shouldn't use them
 #include "libavformat/ffm.h"
@@ -306,12 +307,10 @@ static int rtp_new_av_stream(HTTPContext *c,
                              HTTPContext *rtsp_c);
 
 static const char *my_program_name;
-static const char *my_program_dir;
 
 static const char *config_filename = "/etc/ffserver.conf";
 
 static int ffserver_debug;
-static int ffserver_daemon;
 static int no_launch;
 static int need_to_start_children;
 
@@ -522,19 +521,12 @@ static void start_children(FFStream *feed)
                     close(i);
 
                 if (!ffserver_debug) {
-                    i = open("/dev/null", O_RDWR);
-                    if (i != -1) {
-                        dup2(i, 0);
-                        dup2(i, 1);
-                        dup2(i, 2);
-                        close(i);
-                    }
-                }
-
-                /* This is needed to make relative pathnames work */
-                if (chdir(my_program_dir) < 0) {
-                    http_log("chdir failed\n");
-                    exit(1);
+                    if (!freopen("/dev/null", "r", stdin))
+                        http_log("failed to redirect STDIN to /dev/null\n;");
+                    if (!freopen("/dev/null", "w", stdout))
+                        http_log("failed to redirect STDOUT to /dev/null\n;");
+                    if (!freopen("/dev/null", "w", stderr))
+                        http_log("failed to redirect STDERR to /dev/null\n;");
                 }
 
                 signal(SIGPIPE, SIG_DFL);
@@ -586,7 +578,7 @@ static void start_multicast(void)
     FFStream *stream;
     char session_id[32];
     HTTPContext *rtp_c;
-    struct sockaddr_in dest_addr;
+    struct sockaddr_in dest_addr = {0};
     int default_port, stream_index;
 
     default_port = 6000;
@@ -801,7 +793,7 @@ static void http_send_too_busy_reply(int fd)
                        "\r\n"
                        "<html><head><title>Too busy</title></head><body>\r\n"
                        "<p>The server is too busy to serve your request at this time.</p>\r\n"
-                       "<p>The number of current connections is %d, and this exceeds the limit of %d.</p>\r\n"
+                       "<p>The number of current connections is %u, and this exceeds the limit of %u.</p>\r\n"
                        "</body></html>\r\n",
                        nb_connections, nb_max_connections);
     av_assert0(len < sizeof(buffer));
@@ -812,7 +804,8 @@ static void http_send_too_busy_reply(int fd)
 static void new_connection(int server_fd, int is_rtsp)
 {
     struct sockaddr_in from_addr;
-    int fd, len;
+    socklen_t len;
+    int fd;
     HTTPContext *c = NULL;
 
     len = sizeof(from_addr);
@@ -928,6 +921,8 @@ static void close_connection(HTTPContext *c)
 
     for(i=0; i<ctx->nb_streams; i++)
         av_free(ctx->streams[i]);
+    av_freep(&ctx->streams);
+    av_freep(&ctx->priv_data);
 
     if (c->stream && !c->post && c->stream->stream_type == STREAM_TYPE_LIVE)
         current_bandwidth -= c->stream->bandwidth;
@@ -1495,7 +1490,8 @@ enum RedirType {
 /* parse http request and prepare header */
 static int http_parse_request(HTTPContext *c)
 {
-    char *p;
+    const char *p;
+    char *p1;
     enum RedirType redir_type;
     char cmd[32];
     char info[1024], filename[1024];
@@ -1506,10 +1502,10 @@ static int http_parse_request(HTTPContext *c)
     FFStream *stream;
     int i;
     char ratebuf[32];
-    char *useragent = 0;
+    const char *useragent = 0;
 
     p = c->buffer;
-    get_word(cmd, sizeof(cmd), (const char **)&p);
+    get_word(cmd, sizeof(cmd), &p);
     av_strlcpy(c->method, cmd, sizeof(c->method));
 
     if (!strcmp(cmd, "GET"))
@@ -1519,7 +1515,7 @@ static int http_parse_request(HTTPContext *c)
     else
         return -1;
 
-    get_word(url, sizeof(url), (const char **)&p);
+    get_word(url, sizeof(url), &p);
     av_strlcpy(c->url, url, sizeof(c->url));
 
     get_word(protocol, sizeof(protocol), (const char **)&p);
@@ -1532,10 +1528,10 @@ static int http_parse_request(HTTPContext *c)
         http_log("%s - - New connection: %s %s\n", inet_ntoa(c->from_addr.sin_addr), cmd, url);
 
     /* find the filename and the optional info string in the request */
-    p = strchr(url, '?');
-    if (p) {
-        av_strlcpy(info, p, sizeof(info));
-        *p = '\0';
+    p1 = strchr(url, '?');
+    if (p1) {
+        av_strlcpy(info, p1, sizeof(info));
+        *p1 = '\0';
     } else
         info[0] = '\0';
 
@@ -1654,7 +1650,7 @@ static int http_parse_request(HTTPContext *c)
     }
 
     if (redir_type != REDIR_NONE) {
-        char *hostinfo = 0;
+        const char *hostinfo = 0;
 
         for (p = c->buffer; *p && *p != '\r' && *p != '\n'; ) {
             if (av_strncasecmp(p, "Host:", 5) == 0) {
@@ -1736,7 +1732,8 @@ static int http_parse_request(HTTPContext *c)
                     case REDIR_SDP:
                         {
                             uint8_t *sdp_data;
-                            int sdp_data_size, len;
+                            int sdp_data_size;
+                            socklen_t len;
                             struct sockaddr_in my_addr;
 
                             snprintf(q, c->buffer_size,
@@ -1787,7 +1784,7 @@ static int http_parse_request(HTTPContext *c)
         if (!stream->is_feed) {
             /* However it might be a status report from WMP! Let us log the
              * data as it might come in handy one day. */
-            char *logline = 0;
+            const char *logline = 0;
             int client_id = 0;
 
             for (p = c->buffer; *p && *p != '\r' && *p != '\n'; ) {
@@ -2048,7 +2045,7 @@ static void compute_status(HTTPContext *c)
             if (stream->pid) {
                 avio_printf(pb, "Running as pid %d.\n", stream->pid);
 
-#if defined(linux) && !defined(CONFIG_NOCUTILS)
+#if defined(linux)
                 {
                     FILE *pid_stat;
                     char ps_cmd[64];
@@ -3019,7 +3016,8 @@ static void rtsp_cmd_describe(HTTPContext *c, const char *url)
     char path1[1024];
     const char *path;
     uint8_t *content;
-    int content_length, len;
+    int content_length;
+    socklen_t len;
     struct sockaddr_in my_addr;
 
     /* find which url is asked */
@@ -3597,6 +3595,8 @@ static void extract_mpeg4_header(AVFormatContext *infile)
     AVStream *st;
     const uint8_t *p;
 
+    infile->flags |= AVFMT_FLAG_NOFILLIN | AVFMT_FLAG_NOPARSE;
+
     mpeg4_count = 0;
     for(i=0;i<infile->nb_streams;i++) {
         st = infile->streams[i];
@@ -3610,7 +3610,7 @@ static void extract_mpeg4_header(AVFormatContext *infile)
 
     printf("MPEG4 without extra data: trying to find header in %s\n", infile->filename);
     while (mpeg4_count > 0) {
-        if (av_read_packet(infile, &pkt) < 0)
+        if (av_read_frame(infile, &pkt) < 0)
             break;
         st = infile->streams[pkt.stream_index];
         if (st->codec->codec_id == AV_CODEC_ID_MPEG4 &&
@@ -4118,7 +4118,7 @@ static int parse_ffconfig(const char *filename)
                 ERROR("%s:%d: Invalid host/IP address: %s\n", arg);
             }
         } else if (!av_strcasecmp(cmd, "NoDaemon")) {
-            ffserver_daemon = 0;
+            // do nothing here, its the default now
         } else if (!av_strcasecmp(cmd, "RTSPPort")) {
             get_arg(arg, sizeof(arg), &p);
             val = atoi(arg);
@@ -4205,10 +4205,7 @@ static int parse_ffconfig(const char *filename)
                     feed->child_argv[i] = av_strdup(arg);
                 }
 
-                feed->child_argv[i] = av_malloc(30 + strlen(feed->filename));
-
-                snprintf(feed->child_argv[i], 30+strlen(feed->filename),
-                    "http://%s:%d/%s",
+                feed->child_argv[i] = av_asprintf("http://%s:%d/%s",
                         (my_http_addr.sin_addr.s_addr == INADDR_ANY) ? "127.0.0.1" :
                     inet_ntoa(my_http_addr.sin_addr),
                     ntohs(my_http_addr.sin_port), feed->filename);
@@ -4270,7 +4267,7 @@ static int parse_ffconfig(const char *filename)
                 stream = av_mallocz(sizeof(FFStream));
                 get_arg(stream->filename, sizeof(stream->filename), &p);
                 q = strrchr(stream->filename, '>');
-                if (*q)
+                if (q)
                     *q = '\0';
 
                 for (s = first_stream; s; s = s->next) {
@@ -4692,7 +4689,6 @@ static void handle_child_exit(int sig)
 static void opt_debug(void)
 {
     ffserver_debug = 1;
-    ffserver_daemon = 0;
     logfilename[0] = '-';
 }
 
@@ -4723,8 +4719,6 @@ int main(int argc, char **argv)
     show_banner(argc, argv, options);
 
     my_program_name = argv[0];
-    my_program_dir = getcwd(0, 0);
-    ffserver_daemon = 1;
 
     parse_options(NULL, argc, argv, options, NULL);
 
@@ -4756,36 +4750,8 @@ int main(int argc, char **argv)
 
     compute_bandwidth();
 
-    /* put the process in background and detach it from its TTY */
-    if (ffserver_daemon) {
-        int pid;
-
-        pid = fork();
-        if (pid < 0) {
-            perror("fork");
-            exit(1);
-        } else if (pid > 0) {
-            /* parent : exit */
-            exit(0);
-        } else {
-            /* child */
-            setsid();
-            close(0);
-            open("/dev/null", O_RDWR);
-            if (strcmp(logfilename, "-") != 0) {
-                close(1);
-                dup(0);
-            }
-            close(2);
-            dup(0);
-        }
-    }
-
     /* signal init */
     signal(SIGPIPE, SIG_IGN);
-
-    if (ffserver_daemon)
-        chdir("/");
 
     if (http_server() < 0) {
         http_log("Could not start server\n");
