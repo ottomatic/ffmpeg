@@ -113,7 +113,12 @@ static int hds_probe(AVProbeData *p)
         ptr++;
     if (!strncmp(ptr, "<?xml", 5) &&
         strstr(ptr, "<manifest") && strstr(ptr, "ns.adobe.com/f4m"))
+    {
+        av_log(NULL, AV_LOG_DEBUG,
+            "Matched hds manifest, returning max score for hds format.\n",
+            NULL);			
         return AVPROBE_SCORE_MAX;
+    }
     return 0;
 }
 
@@ -191,7 +196,9 @@ static void XMLCALL xml_end(void *data, const char *el)
 {
     HDSContext *hds = data;
     struct content_block *block = get_content_block(hds, hds->data_type);
-
+    /* block can be null if we have a node which we don't track, such as akamai:version */
+    if (!block)
+        return;
     if (block->len && !block->dec) {
         /* [rl]strip the string */
         int i;
