@@ -54,7 +54,7 @@ struct content_block {
 };
 
 struct media {
-    int bootstrap_id; // XXX: fill me
+    int bootstrap_id; // 0-based index of the bootstrap associated with the media
     //char url[MAX_URL_SIZE];
     AVFormatContext *ctx;
     AVPacket pkt;
@@ -69,12 +69,12 @@ struct media {
 };
 
 struct bootstrap {
-    int media_id; // XXX: fill me
+    int media_id; // 0-based index of the media associated with the bootstrap
 
     /* from xml */
     char *id;
     char *profile;
-    struct content_block data;
+    struct content_block data;    
 };
 
 enum {
@@ -114,9 +114,7 @@ static int hds_probe(AVProbeData *p)
     if (!strncmp(ptr, "<?xml", 5) &&
         strstr(ptr, "<manifest") && strstr(ptr, "ns.adobe.com/f4m"))
     {
-        av_log(NULL, AV_LOG_DEBUG,
-            "Matched hds manifest, returning max score for hds format.\n",
-            NULL);			
+        av_log(NULL, AV_LOG_DEBUG, "Matched hds manifest, returning max score for hds format.\n");			
         return AVPROBE_SCORE_MAX;
     }
     return 0;
@@ -261,7 +259,17 @@ static int parse_manifest(AVFormatContext *s)
         }
     }
 
-    // TODO: make links between bootstraps and medias
+    // Make links between bootstraps and medias
+    for (int i = 0; i < hds->nb_bs_info; i++) {
+        for (int j = 0; j < hds->nb_medias; j++) {
+            if (strcmp(hds->medias[j]->bootstrap_info_id, hds->bs_info[i]->id) == 0)
+            {
+                av_log(s, AV_LOG_DEBUG, "Linking media at index [%d] to bootstrap at index [%d] (bootstrap_id: [%s])\n", j, i, hds->bs_info[i]->id);
+                hds->bs_info[i]->media_id = j;
+                hds->medias[j]->bootstrap_id = i;
+            }
+        }
+    }
 
     XML_ParserFree(xmlp);
     return hds->parse_ret;
@@ -302,6 +310,8 @@ static int hds_read_close(AVFormatContext *s)
         av_log(0,0," media #%d\n", i);
         av_log(0,0,"  stream_id=[%s] url=[%s] bitrate=%d bs=[%s]\n",
                m->stream_id, m->url, m->bitrate, m->bootstrap_info_id);
+        av_log(0,0,"  bootstrap_id=%d\n",
+               m->bootstrap_id);
         av_log(0,0,"  metadata (len=%d):\n", m->metadata.dec_len);
         av_hex_dump_log(0,0, m->metadata.dec, m->metadata.dec_len);
     }
@@ -311,6 +321,7 @@ static int hds_read_close(AVFormatContext *s)
         av_log(0,0," bs #%d\n", i);
         av_log(0,0,"  id=[%s] profile=[%s]\n", b->id, b->profile);
         av_log(0,0,"  data (len=%d):\n", b->data.dec_len);
+        av_log(0,0,"  media_id=%d\n", b->media_id);
         av_hex_dump_log(0,0, b->data.dec, b->data.dec_len);
     }
 #endif
@@ -330,6 +341,7 @@ static int hds_read_close(AVFormatContext *s)
 
     for (i = 0; i < hds->nb_bs_info; i++) {
         av_freep(&hds->bs_info[i]->id);
+        av_freep(&hds->bs_info[i]->profile);
         av_freep(&hds->bs_info[i]->profile);
         destroy_block(&hds->bs_info[i]->data);
         av_freep(&hds->bs_info[i]);
