@@ -74,7 +74,7 @@ struct bootstrap {
     /* from xml */
     char *id;
     char *profile;
-    struct content_block data;    
+    struct content_block data;
 };
 
 enum {
@@ -310,8 +310,7 @@ static int hds_read_close(AVFormatContext *s)
         av_log(0,0," media #%d\n", i);
         av_log(0,0,"  stream_id=[%s] url=[%s] bitrate=%d bs=[%s]\n",
                m->stream_id, m->url, m->bitrate, m->bootstrap_info_id);
-        av_log(0,0,"  bootstrap_id=%d\n",
-               m->bootstrap_id);
+        av_log(0,0,"  bootstrap_id=%d\n", m->bootstrap_id);
         av_log(0,0,"  metadata (len=%d):\n", m->metadata.dec_len);
         av_hex_dump_log(0,0, m->metadata.dec, m->metadata.dec_len);
     }
@@ -341,7 +340,6 @@ static int hds_read_close(AVFormatContext *s)
 
     for (i = 0; i < hds->nb_bs_info; i++) {
         av_freep(&hds->bs_info[i]->id);
-        av_freep(&hds->bs_info[i]->profile);
         av_freep(&hds->bs_info[i]->profile);
         destroy_block(&hds->bs_info[i]->data);
         av_freep(&hds->bs_info[i]);
