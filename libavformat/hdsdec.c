@@ -45,6 +45,8 @@
 #else
 #define XML_FMT_INT_MOD "l"
 #endif
+static unsigned int hds_read_int32(const uint8_t *s, int pos);
+static uint64_t hds_read_int64(const uint8_t (*s), int pos);
 
 struct content_block {
     char *str;      ///< zero terminated string of read data in the current chunk
@@ -68,14 +70,65 @@ struct media {
     struct content_block metadata;
 };
 
-struct bootstrap {
+typedef struct Bootstrap {
+    u_int8_t version; ///< Either 0 or 1.
+
+    unsigned int bootstrap_info_version; ///< The version number of the boostrap information.
+                                         /// When the update field is set, bootstrap_info_version
+                                         /// indicates the version number that is being updated.
+
+    u_int8_t profile; ///< Indicates if it is the Named Access (0) or the Range
+                      ///  Access (1) profile. One bit reserved for future profiles.
+
+    u_int8_t live;    ///< Indicates if the media presentation is live (1) or not.
+
+    u_int8_t update;  ///< Indicates if this table is a full version (0) or an update (1) to a 
+                      ///  previously defined (sent) full version of the bootstrap box or file.
+
+    unsigned int time_scale; ///< The number of units per second. The field current_media_time
+                             ///  uses thisvalue to represent accurate time. Typically the value
+                             ///  is 1000, for a unit of milliseconds.
+
+    uint64_t smtpe_time_code_offset; ///< The offset of the current media time from the SMTPE time code,
+                                     ///  converted to milliseconds. This ioffset is NOT in time_scale units.
+                                     /// The field is zero when not used.
+
+    char *movie_identifier; ///< The identifier of this presentation. It can be a filename or a url.
+    
+    int nb_server_entries; ///< The number of server entries. The minimum value is 0.
+    
+    char **server_entries; ///< Server URLs in descending order of preference, without trailing /.
+    
+    int nb_quality_entries; ///< The number of quality entries. 
+    
+    char **quality_entries; ///< Array with names of quality segment files, optionally with a trailing /.
+    
+    char *drm_data; ///< Null or string which holds digital rights management meta-data.
+    
+    char *meta_data; ///< Null or string which holds meta data.
+    
+    int nb_segments_runs; ///< The number of entries in the segment_run_table. The minimum value is 1.
+                          ///  Typically, one table contains all segment runs. However, there may be a
+                          ///  segment run for each quality.
+    
+ //   struct segment_run_table *segment_runs; ///< Array of segment run table elements.
+    
+    int nb_fragment_runs; ///< The number of entries in the fragment_run_table. The minimum value is 1.
+    
+ //   struct fragment_run_table *fragment_runs; ///< Array of fragment run table elements.
+    
+} Bootstrap;
+
+typedef struct BootstrapInfo {
     int media_id; // 0-based index of the media associated with the bootstrap
 
     /* from xml */
     char *id;
     char *profile;
     struct content_block data;
-};
+    
+    Bootstrap bootstrap;
+} BootstrapInfo;
 
 enum {
     DATA_TYPE_NONE,
@@ -97,7 +150,7 @@ typedef struct HDSContext {
     struct media **medias;              ///< array of media
     int nb_medias;                      ///< number of element in the medias array
 
-    struct bootstrap **bs_info;         ///< array of bootstrap info
+    BootstrapInfo **bs_info;         ///< array of bootstrap info
     int nb_bs_info;                     ///< number of element in the bootstrap info array
 
     /* xml parsing */
@@ -146,16 +199,16 @@ static void XMLCALL xml_start(void *data, const char *el, const char **attr)
     } else if (!strcmp(el, "metadata")) {
         hds->data_type = DATA_TYPE_MEDIA_METADATA;
     } else if (!strcmp(el, "bootstrapInfo")) {
-        struct bootstrap *b = av_mallocz(sizeof(*b));
-        if (!b) {
+        BootstrapInfo *bi = av_mallocz(sizeof(*bi));
+        if (!bi) {
             hds->parse_ret = AVERROR(ENOMEM);
             return;
         }
-        dynarray_add(&hds->bs_info, &hds->nb_bs_info, b);
+        dynarray_add(&hds->bs_info, &hds->nb_bs_info, bi);
 
         for (i = 0; attr[i]; i += 2) {
-            if      (!strcmp(attr[i], "profile")) b->profile = av_strdup(attr[i + 1]);
-            else if (!strcmp(attr[i], "id"))      b->id      = av_strdup(attr[i + 1]);
+            if      (!strcmp(attr[i], "profile")) bi->profile = av_strdup(attr[i + 1]);
+            else if (!strcmp(attr[i], "id"))      bi->id      = av_strdup(attr[i + 1]);
         }
         hds->data_type = DATA_TYPE_BOOTSTRAP_INFO;
     }
@@ -259,12 +312,12 @@ static int parse_manifest(AVFormatContext *s)
         }
     }
 
-    // Make links between bootstraps and medias
+    // Make links between bootstrap infos and medias
     for (int i = 0; i < hds->nb_bs_info; i++) {
         for (int j = 0; j < hds->nb_medias; j++) {
             if (strcmp(hds->medias[j]->bootstrap_info_id, hds->bs_info[i]->id) == 0)
             {
-                av_log(s, AV_LOG_DEBUG, "Linking media at index [%d] to bootstrap at index [%d] (bootstrap_id: [%s])\n", j, i, hds->bs_info[i]->id);
+                av_log(s, AV_LOG_DEBUG, "Linking media at index [%d] to bootstrap info at index [%d] (bootstrap_id: [%s])\n", j, i, hds->bs_info[i]->id);
                 hds->bs_info[i]->media_id = j;
                 hds->medias[j]->bootstrap_id = i;
             }
@@ -273,6 +326,60 @@ static int parse_manifest(AVFormatContext *s)
 
     XML_ParserFree(xmlp);
     return hds->parse_ret;
+}
+
+
+
+static int read_box_header(uint8_t *data, int *pos, char (*box_type)[4], uint64_t *box_size)
+{
+    if (!data)
+        return -1;
+    /* If there is no starting position we assume we shall start from the beginning */
+    if (pos == NULL)
+        *pos = 0;
+    
+    *box_size = (int64_t)hds_read_int32(data, *pos);
+    av_log(NULL,AV_LOG_DEBUG,"  box_size=[%"PRId64"] \n", *box_size);    
+    
+    /* The box type is in the next four bytes after the initial size */
+    strncpy(*box_type, data + 4, 4);
+    av_log(NULL,AV_LOG_DEBUG,"  box_type=[%s] \n", *box_type);        
+
+    /* if the size is 1, it points to an extended size in the next 8 bytes */
+    if (*box_size == 1)
+    {
+        *box_size = hds_read_int64(data, pos + 8) - (uint64_t)16;
+        *pos += 16;
+    }
+    else
+    {
+        *box_size -= 8;
+        *pos += 8;
+    }
+    
+    return 0;    
+}
+
+static int parse_bootstrap_data(BootstrapInfo *binfo)
+{
+    int ret = 0;
+    int pos = 0;
+    uint64_t box_size = 0;
+    
+    char box_type[4] = "";
+
+    uint8_t *dec = binfo->data.dec;
+  
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_data \n");
+    
+    if (!dec)
+        return -1;
+    
+    ret = read_box_header(dec, &pos, &box_type, &box_size);
+    if (ret < 0)
+        return ret;
+    
+    return 0;        
 }
 
 static int hds_read_header(AVFormatContext *s)
@@ -284,6 +391,13 @@ static int hds_read_header(AVFormatContext *s)
 
     if ((ret = parse_manifest(s)) < 0)
         return ret;
+
+    /* parse the contents of the bootstrap_infos */
+    for (int i = 0; i < hds->nb_bs_info; i++)
+    {
+        if ((ret = parse_bootstrap_data(hds->bs_info[i])) < 0)
+            return ret;
+    }
 
     return 0;
 }
@@ -301,27 +415,27 @@ static int hds_read_close(AVFormatContext *s)
     HDSContext *hds = s->priv_data;
 
 #if 1
-    av_log(0,0,"ID=[%s]\n", hds->id.dec);
-    av_log(0,0,"StreamType=[%s]\n", hds->stream_type.dec);
-    av_log(0,0,"Duration=[%s]\n", hds->duration.dec);
+    av_log(0,AV_LOG_DEBUG,"ID=[%s]\n", hds->id.dec);
+    av_log(NULL,AV_LOG_DEBUG,"StreamType=[%s]\n", hds->stream_type.dec);
+    av_log(NULL,AV_LOG_DEBUG,"Duration=[%s]\n", hds->duration.dec);
 
     for (i = 0; i < hds->nb_medias; i++) {
         const struct media *m = hds->medias[i];
-        av_log(0,0," media #%d\n", i);
-        av_log(0,0,"  stream_id=[%s] url=[%s] bitrate=%d bs=[%s]\n",
+        av_log(NULL,AV_LOG_DEBUG," media #%d\n", i);
+        av_log(NULL,AV_LOG_DEBUG,"  stream_id=[%s] url=[%s] bitrate=%d bs=[%s]\n",
                m->stream_id, m->url, m->bitrate, m->bootstrap_info_id);
-        av_log(0,0,"  bootstrap_id=%d\n", m->bootstrap_id);
-        av_log(0,0,"  metadata (len=%d):\n", m->metadata.dec_len);
+        av_log(NULL,AV_LOG_DEBUG,"  bootstrap_id=%d\n", m->bootstrap_id);
+        av_log(NULL,AV_LOG_DEBUG,"  metadata (len=%d):\n", m->metadata.dec_len);
         av_hex_dump_log(0,0, m->metadata.dec, m->metadata.dec_len);
     }
 
     for (i = 0; i < hds->nb_bs_info; i++) {
-        const struct bootstrap *b = hds->bs_info[i];
-        av_log(0,0," bs #%d\n", i);
-        av_log(0,0,"  id=[%s] profile=[%s]\n", b->id, b->profile);
-        av_log(0,0,"  data (len=%d):\n", b->data.dec_len);
-        av_log(0,0,"  media_id=%d\n", b->media_id);
-        av_hex_dump_log(0,0, b->data.dec, b->data.dec_len);
+        BootstrapInfo *bi = hds->bs_info[i];
+        av_log(NULL,AV_LOG_DEBUG," bs #%d\n", i);
+        av_log(NULL,AV_LOG_DEBUG,"  id=[%s] profile=[%s]\n", bi->id, bi->profile);
+        av_log(NULL,AV_LOG_DEBUG,"  data (len=%d):\n", bi->data.dec_len);
+        av_log(NULL,AV_LOG_DEBUG,"  media_id=%d\n", bi->media_id);
+        av_hex_dump_log(NULL,AV_LOG_DEBUG, bi->data.dec, bi->data.dec_len);
     }
 #endif
 
@@ -343,6 +457,7 @@ static int hds_read_close(AVFormatContext *s)
         av_freep(&hds->bs_info[i]->profile);
         destroy_block(&hds->bs_info[i]->data);
         av_freep(&hds->bs_info[i]);
+        // todo: free booststrap
     }
     av_freep(&hds->bs_info);
 
@@ -367,3 +482,43 @@ AVInputFormat ff_hds_demuxer = {
     .read_close     = hds_read_close,
     //.read_seek      = hds_read_seek,
 };
+
+/* Functions to help parse Boxes as defined in the F4V / F4F spec 
+ * Numbers in streams / base64 blocks are big endian.
+ * */
+static unsigned int hds_read_unsigned_byte(const uint8_t *s, int pos)
+{
+    return s[pos];
+}
+
+static unsigned int hds_read_int16(const uint8_t *s, int pos)
+{
+    unsigned int val;
+    val = hds_read_unsigned_byte(s, pos) << 8;
+    val |= hds_read_unsigned_byte(s, pos + 1);
+    return val;
+}
+
+static unsigned int hds_read_int24(const uint8_t *s, int pos)
+{
+    unsigned int val;
+    val = hds_read_int16(s, pos) << 8;
+    val |= hds_read_unsigned_byte(s, pos + 2);
+    return val;
+}
+
+static unsigned int hds_read_int32(const uint8_t *s, int pos)
+{
+    unsigned int val;
+    val = hds_read_int16(s, pos) << 16;
+    val |= hds_read_int16(s, pos + 2);
+    return val;
+}
+
+static uint64_t hds_read_int64(const uint8_t *s, int pos)
+{
+    uint64_t val;
+    val = (uint64_t)hds_read_int32(s, pos) << 32;
+    val |= (uint64_t)hds_read_int32(s, pos + 4);
+    return val;
+}
