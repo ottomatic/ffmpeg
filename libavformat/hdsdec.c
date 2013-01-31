@@ -62,6 +62,7 @@ static unsigned int hds_read_int16(ContentBlock *block);
 static unsigned int hds_read_int24(ContentBlock *block);
 static unsigned int hds_read_int32(ContentBlock *block);
 static uint64_t hds_read_int64(ContentBlock *block);
+static unsigned int hds_read_string(char *str, ContentBlock *block);
 
 struct media {
     int bootstrap_id; // 0-based index of the bootstrap associated with the media
@@ -100,13 +101,21 @@ typedef struct Bootstrap {
                              ///  uses thisvalue to represent accurate time. Typically the value
                              ///  is 1000, for a unit of milliseconds.
 
+    uint64_t current_media_time; ///< The timestamp in TimeScale units of the latest 
+                                 ///  available Fragment in the media presentation. This
+                                 ///  timestamp is used to request the right fragment
+                                 ///  number. The CurrentMediaTime can be the total
+                                 ///  duration. For media presentations that are not live,
+                                 ///  CurrentMediaTime can be 0.
+
+
     uint64_t smtpe_time_code_offset; ///< The offset of the current media time from the SMTPE time code,
                                      ///  converted to milliseconds. This ioffset is NOT in time_scale units.
                                      /// The field is zero when not used.
 
     char movie_identifier[MAX_URL_SIZE]; ///< The identifier of this presentation. It can be a filename or a url.
     
-    int nb_server_entries; ///< The number of server entries. The minimum value is 0.
+    unsigned int nb_server_entries; ///< The number of server entries. The minimum value is 0.
     
     char **server_entries; ///< Server URLs in descending order of preference, without trailing /.
     
@@ -427,15 +436,80 @@ static int parse_bootstrap_box(BootstrapInfo *binfo)
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box \n");
 
     bootstrap->version = hds_read_unsigned_byte(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->version: [%d] \n", bootstrap->version);
     bootstrap->flags = hds_read_int24(data);
     
     bootstrap->bootstrap_version = hds_read_int32(data);
     
     temp = hds_read_unsigned_byte(data);
     bootstrap->profile = (temp & 0xC0) >> 6;
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->profile: [%d] \n", bootstrap->profile);
     bootstrap->live = ((temp & 0x20) == 0x20);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->live: [%d] \n", bootstrap->live);
     bootstrap->update = ((temp & 0x1) == 0x1);
+    
+    bootstrap->time_scale = hds_read_int32(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->time_scale: [%d] \n", bootstrap->time_scale);
+
+    bootstrap->current_media_time = hds_read_int64(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->current_media_time: [%"PRId64"]\n", bootstrap->current_media_time);
+    bootstrap->smtpe_time_code_offset = hds_read_int64(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->smtpe_time_code_offset: [%"PRId64"]\n", bootstrap->smtpe_time_code_offset);
+    
+    hds_read_string(bootstrap->movie_identifier, data);    
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->movie_identifier: [%s] \n", bootstrap->movie_identifier);
+    
+    int nb_server_entries = hds_read_unsigned_byte(data);
+    
+    for (int index = 0; index < nb_server_entries; index++)
+    {
+        char *server_entry;
+        server_entry = av_mallocz(sizeof(server_entry));
+        if (!server_entry) {
+            return AVERROR(ENOMEM);
+        }
+        hds_read_string(server_entry, data);
         
+        dynarray_add(&bootstrap->server_entries, &bootstrap->nb_server_entries, server_entry);
+    }
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->nb_server_entries: [%d] \n", bootstrap->nb_server_entries);
+
+    int nb_quality_entries = hds_read_unsigned_byte(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, nb_quality_entries: [%d] \n", nb_quality_entries);
+    
+    for (int index = 0; index < nb_quality_entries; index++)
+    {
+        char *quality_entry;
+        quality_entry = av_mallocz(sizeof(quality_entry));
+        if (!quality_entry) {
+            return AVERROR(ENOMEM);
+        }
+        hds_read_string(quality_entry, data);
+        av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, quality_entry: [%s] \n", quality_entry);
+        
+        dynarray_add(&bootstrap->quality_entries, &bootstrap->nb_quality_entries, quality_entry);
+    }
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->nb_quality_entries: [%d] \n", bootstrap->nb_quality_entries);
+
+    if (!bootstrap->drm_data)
+        bootstrap->drm_data = av_mallocz(sizeof(bootstrap->drm_data));
+    hds_read_string(bootstrap->drm_data, data);    
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->drm_data: [%s] \n", bootstrap->drm_data);
+    
+    if (!bootstrap->meta_data)
+        bootstrap->meta_data = av_mallocz(sizeof(bootstrap->meta_data));
+    hds_read_string(bootstrap->meta_data, data);    
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->meta_data: [%s] \n", bootstrap->meta_data);
+
+    int nb_segments_runs = hds_read_unsigned_byte(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, nb_segments_runs: [%d] \n", nb_segments_runs);
+    
+    for (int index = 0; index < nb_segments_runs; index++)
+    {
+  
+    }
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->nb_segments_runs: [%d] \n", bootstrap->nb_segments_runs);
+
     return 0;
 }
 
@@ -623,4 +697,23 @@ static uint64_t hds_read_int64(ContentBlock *block)
     val = (uint64_t)hds_read_int32(block) << 32;
     val |= (uint64_t)hds_read_int32(block);
     return val;
+}
+
+static unsigned int hds_read_string(char *str, ContentBlock *block)
+{
+    unsigned int strlen = 0;
+    while (block->dec[block->dec_ptr + strlen] != '\0')
+        strlen++;
+    av_log(NULL,AV_LOG_DEBUG,"  hds_read_string, strlen: [%d] \n", strlen);
+    
+    if (strlen > 0)
+        strncpy(str, block->dec + block->dec_ptr, strlen);
+
+    av_log(NULL,AV_LOG_DEBUG,"  hds_read_string, inserting null character \n");
+
+    str[strlen] = '\0';
+    av_log(NULL,AV_LOG_DEBUG,"  hds_read_string, moving dec_ptr\n");
+    block->dec_ptr += strlen + 1;
+    av_log(NULL,AV_LOG_DEBUG,"  hds_read_string, returning \n");
+    return strlen;
 }
