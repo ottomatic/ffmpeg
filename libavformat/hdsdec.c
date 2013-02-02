@@ -80,6 +80,59 @@ struct media {
     ContentBlock metadata;
 };
 
+typedef struct SegmentRunEntry{
+    u_int32_t first_segment; ///< The identifying number of the first segment in the run of
+                             ///  segments containing the same number of fragments. The
+                             ///  segment corresponding to the first_segment in the next
+                             ///  SegmentRunEntry will terminate this run.
+
+    u_int32_t fragments_per_segment; ///< The number of fragments in each segment in this run.
+
+} SegmentRunEntry;
+
+/*
+ * Box type: 'asrt'
+Container: Bootstrap Info box ('abst')
+Mandatory: Yes
+Quantity: One or more
+The Segment Run Table (asrt) box can be used to locate a segment that contains a particular fragment.
+There may be several asrt boxes, each for different quality levels.
+41
+ADOBE FLASH VIDEO FILE FORMAT SPECIFICATION VERSION 10.1
+F4V Box Definitions
+The asrt box uses a compact encoding:
+- A Segment Run Table may represent fragment runs for several quality levels.
+- The Segment Run Table is compactly coded. Each entry gives the first segment number for a run of segments
+with the same count of fragments. The count of segments having this same count of fragments can be
+calculated by subtracting the first segment number in this entry from the first segment number in the next
+entry.
+
+ * */
+typedef struct SegmentRunTable {
+    u_int8_t version; ///< Either 0 or 1.
+
+    u_int8_t flags; ///< Reserved. Set to 0.
+    
+    int nb_quality_segment_url_modifiers; ///< The number of QualitySegmentUrlModifiers
+                                               ///  (quality level references) that follow. If 0, this
+                                               ///  Segment Run Table applies to all quality levels,
+                                               ///  and there shall be only one Segment Run Table
+                                               ///  box in the Bootstrap Info box.
+                                               
+    char **quality_segment_url_modifiers; ///< An array of names of the quality levels that this
+                                          ///  table applies to. The names are null-terminated
+                                          ///  UTF-8 strings. The array shall be a subset of the
+                                          ///  QualityEntryTable in the Bootstrap Info (abst) box.
+                                          ///  The names shall not be present in any other
+                                          ///  Segment Run Table in the Bootstrap Info box.
+
+    u_int32_t nb_segment_run_entries; ///< The number of items in this
+                                      ///  SegmentRunEntryTable. The minimum value is 1.
+
+    SegmentRunEntry **segment_run_entries; ///< Array of segment run entries
+
+} SegmentRunTable;
+
 typedef struct Bootstrap {
     u_int8_t version; ///< Either 0 or 1.
 
@@ -97,7 +150,7 @@ typedef struct Bootstrap {
     u_int8_t update;  ///< Indicates if this table is a full version (0) or an update (1) to a 
                       ///  previously defined (sent) full version of the bootstrap box or file.
 
-    unsigned int time_scale; ///< The number of units per second. The field current_media_time
+    u_int8_t time_scale; ///< The number of units per second. The field current_media_time
                              ///  uses thisvalue to represent accurate time. Typically the value
                              ///  is 1000, for a unit of milliseconds.
 
@@ -115,7 +168,7 @@ typedef struct Bootstrap {
 
     char movie_identifier[MAX_URL_SIZE]; ///< The identifier of this presentation. It can be a filename or a url.
     
-    unsigned int nb_server_entries; ///< The number of server entries. The minimum value is 0.
+    int nb_server_entries; ///< The number of server entries. The minimum value is 0.
     
     char **server_entries; ///< Server URLs in descending order of preference, without trailing /.
     
@@ -131,7 +184,7 @@ typedef struct Bootstrap {
                           ///  Typically, one table contains all segment runs. However, there may be a
                           ///  segment run for each quality.
     
- //   struct segment_run_table *segment_runs; ///< Array of segment run table elements.
+    struct SegmentRunTable **segment_runs; ///< Array of segment run table elements.
     
     int nb_fragment_runs; ///< The number of entries in the fragment_run_table. The minimum value is 1.
     
@@ -206,7 +259,8 @@ static void XMLCALL xml_start(void *data, const char *el, const char **attr)
     else if (!strcmp(el, "duration"))   hds->data_type = DATA_TYPE_DURATION;
     else if (!strcmp(el, "media")) {
         av_log(NULL,AV_LOG_DEBUG,"  data_type is media. Allocating media struct. \n");
-        struct media *m = av_mallocz(sizeof(*m));
+        struct media *m;
+        m = av_mallocz(sizeof(*m));
         if (!m) {
             hds->parse_ret = AVERROR(ENOMEM);
             return;
@@ -396,12 +450,8 @@ static int read_box_header(ContentBlock *data, char (*box_type)[5], uint64_t *bo
         return -1;
     }
 
-    av_log(NULL,AV_LOG_DEBUG,"  data->dec_len: [%d] \n", data->dec_len);
     av_log(NULL,AV_LOG_DEBUG,"  data->dec_ptr: [%d] \n", data->dec_ptr);
         
-    /* If there is no starting position we assume we shall start from the beginning */
-//    if (data->dec_ptr == NULL)
-//        data->dec_ptr = 0;
     
     av_log(NULL,AV_LOG_DEBUG,"  Calling hds_read_int32 \n");
     *box_size = (int64_t)hds_read_int32(data);
@@ -426,12 +476,68 @@ static int read_box_header(ContentBlock *data, char (*box_type)[5], uint64_t *bo
     
     return 0;    
 }
+
+static int parse_segment_runtable_box(ContentBlock *data, SegmentRunTable *asrt)
+{  
+    int nb_quality_segment_url_modifiers;
+    int nb_segment_run_entries;
+    
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box \n");
+    asrt->version = hds_read_unsigned_byte(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, asrt->version: [%d] \n", asrt->version);
+    asrt->flags = hds_read_int24(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, asrt->flags: [%d] \n", asrt->flags);
+    
+    nb_quality_segment_url_modifiers = hds_read_unsigned_byte(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, nb_quality_segment_url_modifiers: [%d] \n", nb_quality_segment_url_modifiers);
+    
+    for (int index = 0; index < nb_quality_segment_url_modifiers; index++)
+    {
+        char *quality_segment_url_modifyer = av_mallocz(sizeof(quality_segment_url_modifyer));
+        if (!quality_segment_url_modifyer) {
+            return AVERROR(ENOMEM);
+        }
+        hds_read_string(quality_segment_url_modifyer, data);
+        av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, quality_segment_url_modifyer[%d]: [%s] \n", index, quality_segment_url_modifyer);
+        
+        dynarray_add(&asrt->quality_segment_url_modifiers, &asrt->nb_quality_segment_url_modifiers, quality_segment_url_modifyer);
+    }
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, asrt->nb_quality_segment_url_modifiers: [%d] \n", asrt->nb_quality_segment_url_modifiers);
+
+    nb_segment_run_entries = hds_read_int32(data);
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, nb_segment_run_entries: [%d] \n", nb_segment_run_entries);
+    for (int index = 0; index < nb_segment_run_entries; index++)
+    {
+        // Parse segment run entries
+        SegmentRunEntry *segment_run_entry = av_mallocz(sizeof(*segment_run_entry));
+        if (!asrt) {
+            return AVERROR(ENOMEM);
+        }
+        segment_run_entry->first_segment = hds_read_int32(data);
+        segment_run_entry->fragments_per_segment = hds_read_int32(data);
+        av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, segment_run_entry[%d]->first_segment: [%d] \n", index, segment_run_entry->first_segment);
+        av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, segment_run_entry[%d]->fragments_per_segment: [%d] \n", index, segment_run_entry->fragments_per_segment);
+                
+        av_log(NULL,AV_LOG_DEBUG,"  adding SegmentRunTable[%d] to dynarray.\n", index);
+        dynarray_add(&asrt->segment_run_entries, &asrt->nb_segment_run_entries, segment_run_entry);
+    }
+    av_log(NULL,AV_LOG_DEBUG,"  In parse_segment_runtable_box, asrt->nb_segment_run_entries: [%d] \n", asrt->nb_segment_run_entries);
+
+    return 0;
+}
+
 static int parse_bootstrap_box(BootstrapInfo *binfo)
 {
+    int ret = 0;
+    uint64_t box_size = 0;
+    char box_type[5];
+    const char expected_boxtype_segment_runs[5] = "asrt";
+    
     ContentBlock *data = &binfo->data;
     
     Bootstrap *bootstrap = &binfo->bootstrap; 
     uint8_t temp;
+    int nb_server_entries, nb_quality_entries;
     
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box \n");
 
@@ -459,9 +565,9 @@ static int parse_bootstrap_box(BootstrapInfo *binfo)
     hds_read_string(bootstrap->movie_identifier, data);    
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->movie_identifier: [%s] \n", bootstrap->movie_identifier);
     
-    int nb_server_entries = hds_read_unsigned_byte(data);
+    nb_server_entries = hds_read_unsigned_byte(data);
     
-    for (int index = 0; index < nb_server_entries; index++)
+    for (u_int8_t index = 0; index < nb_server_entries; index++)
     {
         char *server_entry;
         server_entry = av_mallocz(sizeof(server_entry));
@@ -474,7 +580,7 @@ static int parse_bootstrap_box(BootstrapInfo *binfo)
     }
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->nb_server_entries: [%d] \n", bootstrap->nb_server_entries);
 
-    int nb_quality_entries = hds_read_unsigned_byte(data);
+    nb_quality_entries = hds_read_unsigned_byte(data);
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, nb_quality_entries: [%d] \n", nb_quality_entries);
     
     for (int index = 0; index < nb_quality_entries; index++)
@@ -506,13 +612,37 @@ static int parse_bootstrap_box(BootstrapInfo *binfo)
     
     for (int index = 0; index < nb_segments_runs; index++)
     {
-  
+        // Parse segment run table, dynamically add to bootstrap segment run tables list    
+        av_log(NULL,AV_LOG_DEBUG,"  Calling read_box_header, expecting to find segment run table (asrt)\n");
+        
+        ret = read_box_header(data, &box_type, &box_size);
+        if (ret < 0)
+            return ret;
+
+        av_log(NULL,AV_LOG_DEBUG,"  box_type: [%s], box_size: [%"PRId64"]\n", &box_type, box_size);
+        
+        if (!strcmp(box_type, expected_boxtype_segment_runs))
+        {
+            av_log(NULL,AV_LOG_ERROR,"  bootstrap meta data does not have segment run table box (asrt) at expected position. data->dec_ptr: [%d]\n", data->dec_ptr);        
+            return AVERROR_INVALIDDATA;
+        }
+        
+        SegmentRunTable *asrt = av_mallocz(sizeof(*asrt));
+        if (!asrt) {
+            return AVERROR(ENOMEM);
+        }     
+        av_log(NULL,AV_LOG_DEBUG,"  adding SegmentRunTable to dynarray. \n");
+        dynarray_add(&bootstrap->segment_runs, &bootstrap->nb_segments_runs, asrt);
+
+        av_log(NULL,AV_LOG_DEBUG,"  ok. calling parse_segment_runtable_box\n");        
+        ret = parse_segment_runtable_box(data, asrt);
+        if (ret < 0)
+            return ret;
     }
     av_log(NULL,AV_LOG_DEBUG,"  In parse_bootstrap_box, bootstrap->nb_segments_runs: [%d] \n", bootstrap->nb_segments_runs);
 
     return 0;
 }
-
 static int parse_bootstrap_data(BootstrapInfo *binfo)
 {
     int ret = 0;
@@ -534,11 +664,12 @@ static int parse_bootstrap_data(BootstrapInfo *binfo)
     if (ret < 0)
         return ret;
 
-    av_log(NULL,AV_LOG_DEBUG,"  box_type: [%s], box_size: [%"PRId64"]\n", &box_type, box_size);
+    av_log(NULL,AV_LOG_DEBUG,"  box_type: [%s], expected_boxtype: [%s], box_size: [%"PRId64"]\n", &box_type, &expected_boxtype, box_size);
+    av_log(NULL,AV_LOG_DEBUG,"  strncmp(box_type, expected_boxtype, 4): [%d]\n", strncmp(box_type, expected_boxtype, 4));
     
-    if (!strcmp(box_type, expected_boxtype))
+    if (strncmp(box_type, expected_boxtype, 4) != 0)
     {
-        av_log(NULL,AV_LOG_ERROR,"  bootstrap meta data does not start whith bootstrap. box_type: [%s]\n", &box_type);        
+        av_log(NULL,AV_LOG_ERROR,"  bootstrap meta data does not start with bootstrap. box_type: [%s]\n", &box_type);        
         return AVERROR_INVALIDDATA;
     }
 
@@ -669,7 +800,7 @@ static unsigned int hds_read_unsigned_byte(ContentBlock *block)
 
 static unsigned int hds_read_int16(ContentBlock *block)
 {
-    unsigned int val;
+    u_int8_t val;
     val = hds_read_unsigned_byte(block) << 8;
     val |= hds_read_unsigned_byte(block);
     return val;
@@ -677,7 +808,7 @@ static unsigned int hds_read_int16(ContentBlock *block)
 
 static unsigned int hds_read_int24(ContentBlock *block)
 {
-    unsigned int val;
+    u_int8_t val;
     val = hds_read_int16(block) << 8;
     val |= hds_read_unsigned_byte(block);
     return val;
@@ -685,7 +816,7 @@ static unsigned int hds_read_int24(ContentBlock *block)
 
 static unsigned int hds_read_int32(ContentBlock *block)
 {
-    unsigned int val;
+    u_int8_t val;
     val = hds_read_int16(block) << 16;
     val |= hds_read_int16(block);
     return val;
@@ -701,7 +832,7 @@ static uint64_t hds_read_int64(ContentBlock *block)
 
 static unsigned int hds_read_string(char *str, ContentBlock *block)
 {
-    unsigned int strlen = 0;
+    u_int8_t strlen = 0;
     while (block->dec[block->dec_ptr + strlen] != '\0')
         strlen++;
     av_log(NULL,AV_LOG_DEBUG,"  hds_read_string, strlen: [%d] \n", strlen);
